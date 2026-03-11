@@ -174,7 +174,7 @@ describe("skill.getStatus", () => {
     });
 
     // Wait a bit for the background process to create step records
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     const status = await caller.skill.getStatus({ id });
     expect(status).not.toBeNull();
@@ -196,7 +196,9 @@ describe("skill.cancel", () => {
     const { ctx } = createAuthContext();
     const caller = appRouter.createCaller(ctx);
 
-    await expect(caller.skill.cancel({ id: 999999 })).rejects.toThrow("Generation not found");
+    await expect(caller.skill.cancel({ id: 999999 })).rejects.toThrow(
+      "Generation not found"
+    );
   });
 
   it("cancels a running generation", async () => {
@@ -211,7 +213,7 @@ describe("skill.cancel", () => {
     });
 
     // Wait for it to start running
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     const result = await caller.skill.cancel({ id });
     expect(result).toEqual({ success: true });
@@ -234,7 +236,9 @@ describe("skill.delete", () => {
     const { ctx } = createAuthContext();
     const caller = appRouter.createCaller(ctx);
 
-    await expect(caller.skill.delete({ id: 999999 })).rejects.toThrow("Generation not found");
+    await expect(caller.skill.delete({ id: 999999 })).rejects.toThrow(
+      "Generation not found"
+    );
   });
 
   it("deletes a generation and its steps", async () => {
@@ -249,7 +253,7 @@ describe("skill.delete", () => {
     });
 
     // Wait for background process to create steps
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
     // Delete it
     const result = await caller.skill.delete({ id });

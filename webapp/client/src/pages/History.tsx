@@ -6,7 +6,15 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { Link, useLocation } from "wouter";
 import {
-  CheckCircle2, Loader2, XCircle, Clock, ArrowLeft, Plus, Sparkles, Trash2, Ban
+  CheckCircle2,
+  Loader2,
+  XCircle,
+  Clock,
+  ArrowLeft,
+  Plus,
+  Sparkles,
+  Trash2,
+  Ban,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -51,16 +59,19 @@ export default function History() {
   const [, navigate] = useLocation();
 
   const utils = trpc.useUtils();
-  const { data: generations, isLoading } = trpc.skill.history.useQuery(undefined, {
-    enabled: isAuthenticated,
-  });
+  const { data: generations, isLoading } = trpc.skill.history.useQuery(
+    undefined,
+    {
+      enabled: isAuthenticated,
+    }
+  );
 
   const deleteMutation = trpc.skill.delete.useMutation({
     onSuccess: () => {
       toast.success("已删除生成记录");
       utils.skill.history.invalidate();
     },
-    onError: (err) => {
+    onError: err => {
       toast.error("删除失败: " + err.message);
     },
   });
@@ -80,11 +91,18 @@ export default function History() {
       <div className="container py-4 flex-1">
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="mb-1 -ml-2 gap-1 h-7 text-xs">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate("/")}
+              className="mb-1 -ml-2 gap-1 h-7 text-xs"
+            >
               <ArrowLeft className="h-3.5 w-3.5" /> 返回
             </Button>
             <h1 className="text-xl font-bold">生成历史</h1>
-            <p className="text-xs text-muted-foreground">查看和管理你的 Skill 生成记录</p>
+            <p className="text-xs text-muted-foreground">
+              查看和管理你的 Skill 生成记录
+            </p>
           </div>
           <Button size="sm" onClick={() => navigate("/")} className="gap-1.5">
             <Plus className="h-3.5 w-3.5" />
@@ -95,7 +113,9 @@ export default function History() {
         {!isAuthenticated && !authLoading ? (
           <Card>
             <CardContent className="py-8 text-center">
-              <p className="text-sm text-muted-foreground mb-3">请先登录查看历史记录</p>
+              <p className="text-sm text-muted-foreground mb-3">
+                请先登录查看历史记录
+              </p>
               <Button size="sm" asChild>
                 <a href={getLoginUrl()}>登录</a>
               </Button>
@@ -112,8 +132,14 @@ export default function History() {
                 <Sparkles className="h-5 w-5 text-primary" />
               </div>
               <p className="text-sm font-medium mb-0.5">还没有生成记录</p>
-              <p className="text-xs text-muted-foreground mb-3">创建你的第一个 Agent Skill</p>
-              <Button size="sm" onClick={() => navigate("/")} className="gap-1.5">
+              <p className="text-xs text-muted-foreground mb-3">
+                创建你的第一个 Agent Skill
+              </p>
+              <Button
+                size="sm"
+                onClick={() => navigate("/")}
+                className="gap-1.5"
+              >
                 <Plus className="h-3.5 w-3.5" />
                 开始创建
               </Button>
@@ -121,17 +147,20 @@ export default function History() {
           </Card>
         ) : (
           <div className="space-y-2">
-            {generations.map((gen) => (
+            {generations.map((gen: any) => (
               <Link key={gen.id} href={`/generate/${gen.id}`}>
                 <Card className="hover:border-primary/30 hover:shadow-sm transition-all cursor-pointer">
                   <CardContent className="flex items-center justify-between py-2.5 px-4">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-sm truncate">{gen.skillName}</h3>
+                        <h3 className="font-semibold text-sm truncate">
+                          {gen.skillName}
+                        </h3>
                         <StatusBadge status={gen.status} />
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                        {gen.domain} · {new Date(gen.createdAt).toLocaleString("zh-CN")}
+                        {gen.domain} ·{" "}
+                        {new Date(gen.createdAt).toLocaleString("zh-CN")}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -141,7 +170,7 @@ export default function History() {
                         </span>
                       )}
                       <button
-                        onClick={(e) => handleDelete(e, gen.id)}
+                        onClick={e => handleDelete(e, gen.id)}
                         className="p-1 rounded-md text-muted-foreground/50 hover:text-destructive hover:bg-destructive/5 transition-colors"
                         title="删除"
                       >

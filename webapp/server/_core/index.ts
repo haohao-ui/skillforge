@@ -6,6 +6,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import { ENV } from "./env";
 import { serveStatic, setupVite } from "./vite";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -28,6 +29,12 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  if (ENV.isProduction && !ENV.authEnabled) {
+    throw new Error(
+      "Authentication must be configured in production. Set JWT_SECRET, VITE_APP_ID, OAUTH_SERVER_URL, and VITE_OAUTH_PORTAL_URL."
+    );
+  }
+
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads

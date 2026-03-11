@@ -5,22 +5,44 @@ import { trpc } from "@/lib/trpc";
 import { useParams, useLocation } from "wouter";
 import { useState, useEffect, useMemo } from "react";
 import {
-  CheckCircle2, Circle, Loader2, XCircle, FileCode, Download,
-  ChevronDown, ChevronRight, ArrowLeft, Copy, Check, FolderTree,
-  RefreshCw, AlertTriangle, Square, Trash2
+  CheckCircle2,
+  Circle,
+  Loader2,
+  XCircle,
+  FileCode,
+  Download,
+  ChevronDown,
+  ChevronRight,
+  ArrowLeft,
+  Copy,
+  Check,
+  FolderTree,
+  RefreshCw,
+  AlertTriangle,
+  Square,
+  Trash2,
 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
 
 const STEP_LABELS = [
-  "", "需求深度挖掘", "架构决策引擎", "元数据精炼",
-  "SKILL.md 主体生成", "质量审计与优化", "配套资源生成", "最终组装与交付"
+  "",
+  "需求深度挖掘",
+  "架构决策引擎",
+  "元数据精炼",
+  "SKILL.md 主体生成",
+  "质量审计与优化",
+  "配套资源生成",
+  "最终组装与交付",
 ];
 
 function StepIcon({ status }: { status: string }) {
-  if (status === "completed") return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
-  if (status === "running") return <Loader2 className="h-4 w-4 text-primary animate-spin" />;
-  if (status === "failed") return <XCircle className="h-4 w-4 text-destructive" />;
+  if (status === "completed")
+    return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
+  if (status === "running")
+    return <Loader2 className="h-4 w-4 text-primary animate-spin" />;
+  if (status === "failed")
+    return <XCircle className="h-4 w-4 text-destructive" />;
   return <Circle className="h-4 w-4 text-muted-foreground/40" />;
 }
 
@@ -32,7 +54,13 @@ function CopyButton({ text }: { text: string }) {
     setTimeout(() => setCopied(false), 2000);
   };
   return (
-    <Button variant="ghost" size="sm" onClick={handleCopy} className="h-6 gap-1 text-[11px] px-1.5">
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      onClick={handleCopy}
+      className="h-6 gap-1 text-[11px] px-1.5"
+    >
       {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
       {copied ? "已复制" : "复制"}
     </Button>
@@ -45,20 +73,33 @@ function FilePreview({ file }: { file: { path: string; content: string } }) {
 
   return (
     <div className="border border-border/60 rounded-md overflow-hidden">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-3 py-2 bg-muted/30 hover:bg-muted/50 transition-colors"
-      >
-        <div className="flex items-center gap-1.5">
-          <FileCode className={`h-3.5 w-3.5 ${isSkillMd ? "text-emerald-500" : "text-primary"}`} />
-          <span className="font-mono text-xs font-medium">{file.path}</span>
-          {isSkillMd && <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">核心文件</span>}
-        </div>
-        <div className="flex items-center gap-1">
-          <CopyButton text={file.content} />
-          {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-        </div>
-      </button>
+      <div className="flex items-center gap-2 bg-muted/30 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-sm hover:bg-muted/50 transition-colors"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <FileCode
+              className={`h-3.5 w-3.5 shrink-0 ${isSkillMd ? "text-emerald-500" : "text-primary"}`}
+            />
+            <span className="truncate font-mono text-xs font-medium">
+              {file.path}
+            </span>
+            {isSkillMd && (
+              <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                核心文件
+              </span>
+            )}
+          </div>
+          {expanded ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          )}
+        </button>
+        <CopyButton text={file.content} />
+      </div>
       {expanded && (
         <div className="max-h-[500px] overflow-auto bg-muted/10">
           {isSkillMd ? (
@@ -85,10 +126,15 @@ export default function Generate() {
   const { data: gen, isLoading } = trpc.skill.getStatus.useQuery(
     { id: genId },
     {
-      refetchInterval: (query) => {
+      refetchInterval: query => {
         const d = query.state.data;
         if (!d) return 2000;
-        if (d.status === "completed" || d.status === "failed" || d.status === "cancelled") return false;
+        if (
+          d.status === "completed" ||
+          d.status === "failed" ||
+          d.status === "cancelled"
+        )
+          return false;
         return 2000;
       },
     }
@@ -99,7 +145,7 @@ export default function Generate() {
       toast.success("已重新启动生成流程");
       utils.skill.getStatus.invalidate({ id: genId });
     },
-    onError: (err) => {
+    onError: err => {
       toast.error("重试失败: " + err.message);
     },
   });
@@ -109,7 +155,7 @@ export default function Generate() {
       toast.success("已取消生成");
       utils.skill.getStatus.invalidate({ id: genId });
     },
-    onError: (err) => {
+    onError: err => {
       toast.error("取消失败: " + err.message);
     },
   });
@@ -119,7 +165,7 @@ export default function Generate() {
       toast.success("已删除生成记录");
       navigate("/");
     },
-    onError: (err) => {
+    onError: err => {
       toast.error("删除失败: " + err.message);
     },
   });
@@ -140,12 +186,13 @@ export default function Generate() {
 
   useEffect(() => {
     if (gen?.steps) {
-      const running = gen.steps.find((s) => s.status === "running");
+      const running = gen.steps.find((s: any) => s.status === "running");
       if (running) setExpandedStep(running.stepNumber);
     }
   }, [gen?.steps]);
 
-  const completedCount = gen?.steps?.filter((s) => s.status === "completed").length || 0;
+  const completedCount =
+    gen?.steps?.filter((s: any) => s.status === "completed").length || 0;
   const progress = gen?.steps ? Math.round((completedCount / 7) * 100) : 0;
 
   const resultFiles = useMemo(() => {
@@ -160,7 +207,7 @@ export default function Generate() {
   }, [gen?.result]);
 
   const hasFailedSteps = useMemo(() => {
-    return gen?.steps?.some((s) => s.status === "failed") || false;
+    return gen?.steps?.some((s: any) => s.status === "failed") || false;
   }, [gen?.steps]);
 
   const handleDownloadZip = async () => {
@@ -219,7 +266,12 @@ export default function Generate() {
       <div className="container py-4 flex-1">
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="mb-1 -ml-2 gap-1 h-7 text-xs">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate("/")}
+              className="mb-1 -ml-2 gap-1 h-7 text-xs"
+            >
               <ArrowLeft className="h-3.5 w-3.5" /> 返回
             </Button>
             <h1 className="text-xl font-bold">{gen.skillName}</h1>
@@ -244,7 +296,9 @@ export default function Generate() {
               </Button>
             )}
             {/* Resume button for failed or partial generations */}
-            {(gen.status === "failed" || gen.status === "cancelled" || (gen.status === "completed" && hasFailedSteps)) && (
+            {(gen.status === "failed" ||
+              gen.status === "cancelled" ||
+              (gen.status === "completed" && hasFailedSteps)) && (
               <Button
                 variant="outline"
                 size="sm"
@@ -267,7 +321,9 @@ export default function Generate() {
               </Button>
             )}
             {/* Delete button for all non-running states */}
-            {(gen.status === "completed" || gen.status === "failed" || gen.status === "cancelled") && (
+            {(gen.status === "completed" ||
+              gen.status === "failed" ||
+              gen.status === "cancelled") && (
               <Button
                 variant="outline"
                 size="sm"
@@ -296,7 +352,9 @@ export default function Generate() {
                 部分步骤未能成功执行，已从已完成的步骤中组装可用结果。您可以点击"重试失败步骤"来补全缺失的内容。
               </p>
               {gen.errorMessage && (
-                <p className="text-xs text-amber-600 mt-1">{gen.errorMessage}</p>
+                <p className="text-xs text-amber-600 mt-1">
+                  {gen.errorMessage}
+                </p>
               )}
             </div>
           </div>
@@ -309,7 +367,9 @@ export default function Generate() {
               <CardHeader className="pb-2 pt-3 px-3">
                 <CardTitle className="text-sm flex items-center justify-between">
                   生成进度
-                  <span className="text-xs font-normal text-muted-foreground">{progress}%</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {progress}%
+                  </span>
                 </CardTitle>
                 <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
                   <div
@@ -321,10 +381,16 @@ export default function Generate() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-0.5 px-3 pb-3">
-                {gen.steps?.map((step) => (
+                {gen.steps?.map((step: any) => (
                   <button
                     key={step.stepNumber}
-                    onClick={() => setExpandedStep(expandedStep === step.stepNumber ? null : step.stepNumber)}
+                    onClick={() =>
+                      setExpandedStep(
+                        expandedStep === step.stepNumber
+                          ? null
+                          : step.stepNumber
+                      )
+                    }
                     className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors ${
                       expandedStep === step.stepNumber
                         ? "bg-primary/10 text-primary"
@@ -347,15 +413,21 @@ export default function Generate() {
 
                 {gen.status === "failed" && gen.errorMessage && (
                   <div className="mt-2 p-2 rounded-md bg-destructive/10 border border-destructive/20">
-                    <p className="text-xs text-destructive font-medium">生成失败</p>
-                    <p className="text-[11px] text-destructive/80 mt-0.5">{gen.errorMessage}</p>
+                    <p className="text-xs text-destructive font-medium">
+                      生成失败
+                    </p>
+                    <p className="text-[11px] text-destructive/80 mt-0.5">
+                      {gen.errorMessage}
+                    </p>
                   </div>
                 )}
 
                 {gen.status === "cancelled" && (
                   <div className="mt-2 p-2 rounded-md bg-amber-50 border border-amber-200">
                     <p className="text-xs text-amber-700 font-medium">已取消</p>
-                    <p className="text-[11px] text-amber-600 mt-0.5">此生成任务已被用户取消</p>
+                    <p className="text-[11px] text-amber-600 mt-0.5">
+                      此生成任务已被用户取消
+                    </p>
                   </div>
                 )}
               </CardContent>
@@ -373,23 +445,33 @@ export default function Generate() {
                 </CardHeader>
                 <CardContent className="px-4 pb-4">
                   {(() => {
-                    const step = gen.steps?.find((s) => s.stepNumber === expandedStep);
+                    const step = gen.steps?.find(
+                      (s: any) => s.stepNumber === expandedStep
+                    );
                     if (!step) return null;
                     if (step.status === "pending") {
-                      return <p className="text-xs text-muted-foreground">等待执行...</p>;
+                      return (
+                        <p className="text-xs text-muted-foreground">
+                          等待执行...
+                        </p>
+                      );
                     }
                     if (step.status === "running") {
                       return (
                         <div className="flex items-center gap-2 py-6 justify-center">
                           <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                          <span className="text-xs text-muted-foreground">AI 正在思考中...</span>
+                          <span className="text-xs text-muted-foreground">
+                            AI 正在思考中...
+                          </span>
                         </div>
                       );
                     }
                     if (step.status === "failed") {
                       return (
                         <div className="p-3 rounded-md bg-destructive/10">
-                          <p className="text-xs text-destructive">{step.errorMessage || "执行失败"}</p>
+                          <p className="text-xs text-destructive">
+                            {step.errorMessage || "执行失败"}
+                          </p>
                         </div>
                       );
                     }
@@ -410,7 +492,9 @@ export default function Generate() {
                     <FolderTree className="h-3.5 w-3.5 text-primary" />
                     生成结果 ({resultFiles.length} 个文件)
                     {isPartial && (
-                      <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">部分完成</span>
+                      <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                        部分完成
+                      </span>
                     )}
                   </CardTitle>
                 </CardHeader>
@@ -430,11 +514,11 @@ export default function Generate() {
                     <div className="mt-3 p-3 rounded-md bg-primary/5 border border-primary/10">
                       <h4 className="font-semibold text-xs mb-1.5">使用说明</h4>
                       <div className="prose prose-sm max-w-none dark:prose-invert text-xs">
-                        <Streamdown>{
-                          typeof (gen.result as any).usage === "string"
+                        <Streamdown>
+                          {typeof (gen.result as any).usage === "string"
                             ? (gen.result as any).usage
-                            : `**安装方式**: ${(gen.result as any).usage.installation || ""}\n\n**触发示例**:\n${((gen.result as any).usage.trigger_examples || []).map((e: string) => `- ${e}`).join("\n")}\n\n**迭代建议**: ${(gen.result as any).usage.iteration_suggestions || ""}`
-                        }</Streamdown>
+                            : `**安装方式**: ${(gen.result as any).usage.installation || ""}\n\n**触发示例**:\n${((gen.result as any).usage.trigger_examples || []).map((e: string) => `- ${e}`).join("\n")}\n\n**迭代建议**: ${(gen.result as any).usage.iteration_suggestions || ""}`}
+                        </Streamdown>
                       </div>
                     </div>
                   )}
@@ -442,14 +526,18 @@ export default function Generate() {
               </Card>
             )}
 
-            {!expandedStep && gen.status !== "completed" && gen.status !== "failed" && (
-              <Card>
-                <CardContent className="py-8 text-center">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto mb-3" />
-                  <p className="text-xs text-muted-foreground">点击左侧步骤查看详细输出</p>
-                </CardContent>
-              </Card>
-            )}
+            {!expandedStep &&
+              gen.status !== "completed" &&
+              gen.status !== "failed" && (
+                <Card>
+                  <CardContent className="py-8 text-center">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto mb-3" />
+                    <p className="text-xs text-muted-foreground">
+                      点击左侧步骤查看详细输出
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
           </div>
         </div>
       </div>

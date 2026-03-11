@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { _isValidSkillMd, _extractSkillMdFromStep5, _extractResourceFiles } from "./skillEngine";
+import {
+  _isValidSkillMd,
+  _extractSkillMdFromStep5,
+  _extractResourceFiles,
+} from "./skillEngine";
 
 // ─────────────────────────────────────────────
 // isValidSkillMd tests
@@ -120,7 +124,12 @@ Write beautiful markdown documents with proper formatting.
 - [ ] Links are valid
 \`\`\``;
 
-    const result = _extractSkillMdFromStep5(step5Output, "", "", "markdown-writer");
+    const result = _extractSkillMdFromStep5(
+      step5Output,
+      "",
+      "",
+      "markdown-writer"
+    );
     expect(result).toContain("name: markdown-writer");
     expect(result).toContain("description:");
     expect(result).toContain("# Markdown Writer");
@@ -203,7 +212,12 @@ Professional markdown writing skill that helps create well-structured documents.
 - [ ] Tables are properly formatted
 \`\`\``;
 
-    const result = _extractSkillMdFromStep5(step5Output, "", "", "markdown-writer");
+    const result = _extractSkillMdFromStep5(
+      step5Output,
+      "",
+      "",
+      "markdown-writer"
+    );
     expect(result).toContain("name: markdown-writer");
     expect(result).toContain("Professional markdown writing skill");
     expect(result).not.toContain("Docker Compose Tutorial");
@@ -309,7 +323,12 @@ Analyze data with precision.
 - Do NOT skip data validation
 - Do NOT assume data types`;
 
-    const result = _extractSkillMdFromStep5(step5Output, step3Output, step4Output, "data-analyzer");
+    const result = _extractSkillMdFromStep5(
+      step5Output,
+      step3Output,
+      step4Output,
+      "data-analyzer"
+    );
     expect(result).toContain("name: data-analyzer");
     expect(result).toContain("# Data Analyzer");
     expect(result).toContain("Analyze data with precision");
@@ -353,7 +372,12 @@ description: |
 - Do NOT skip heading levels
 - Do NOT use HTML unless necessary`;
 
-    const result = _extractSkillMdFromStep5(step5Output, "", "", "markdown-writer");
+    const result = _extractSkillMdFromStep5(
+      step5Output,
+      "",
+      "",
+      "markdown-writer"
+    );
     expect(result).toContain("name: markdown-writer");
     expect(result).toContain("Core Workflow");
     expect(result).toContain("Anti-patterns");
@@ -361,7 +385,12 @@ description: |
   });
 
   it("handles empty Step 5 output gracefully", () => {
-    const result = _extractSkillMdFromStep5("", "---\nname: test\ndescription: |\n  test\n---", "# Test body", "test");
+    const result = _extractSkillMdFromStep5(
+      "",
+      "---\nname: test\ndescription: |\n  test\n---",
+      "# Test body",
+      "test"
+    );
     expect(result).toContain("name: test");
     expect(result).toContain("# Test body");
   });

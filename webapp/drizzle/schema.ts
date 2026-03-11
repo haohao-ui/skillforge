@@ -1,77 +1,118 @@
-import { int, json, mysqlEnum, mysqlTable, text, timestamp, varchar, customType } from "drizzle-orm/mysql-core";
+export const USER_ROLES = ["user", "admin"] as const;
+export type UserRole = (typeof USER_ROLES)[number];
 
-/** Custom mediumtext type for large content (up to 16MB) */
-const mediumtext = customType<{ data: string; driverData: string }>({
-  dataType() {
-    return "mediumtext";
-  },
-});
+export const GENERATION_STATUSES = [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+export type GenerationStatus = (typeof GENERATION_STATUSES)[number];
 
-/**
- * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
- */
-export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
-  id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
-  openId: varchar("openId", { length: 64 }).notNull().unique(),
-  name: text("name"),
-  email: varchar("email", { length: 320 }),
-  loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
-});
+export const STEP_STATUSES = [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+] as const;
+export type StepStatus = (typeof STEP_STATUSES)[number];
 
-export type User = typeof users.$inferSelect;
-export type InsertUser = typeof users.$inferInsert;
+export type GenerationResultFile = {
+  path: string;
+  content: string;
+};
 
-/** Skill generation tasks */
-export const skillGenerations = mysqlTable("skill_generations", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  /** User input fields */
-  skillName: varchar("skillName", { length: 256 }).notNull(),
-  domain: varchar("domain", { length: 256 }).notNull(),
-  features: text("features").notNull(),
-  scenarios: text("scenarios"),
-  extraNotes: text("extraNotes"),
-  /** Generation status */
-  status: mysqlEnum("status", ["pending", "running", "completed", "failed", "cancelled"]).default("pending").notNull(),
-  currentStep: int("currentStep").default(0).notNull(),
-  /** Final assembled result (JSON: { files: [{path, content}] }) */
-  result: json("result"),
-  errorMessage: mediumtext("errorMessage"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  completedAt: timestamp("completedAt"),
-});
+export type GenerationResult = {
+  directory_tree: string;
+  files: GenerationResultFile[];
+  usage: unknown;
+  validation_passed: boolean;
+  partial: boolean;
+};
 
-export type SkillGeneration = typeof skillGenerations.$inferSelect;
-export type InsertSkillGeneration = typeof skillGenerations.$inferInsert;
+export type User = {
+  id: number;
+  openId: string;
+  name: string | null;
+  email: string | null;
+  loginMethod: string | null;
+  role: UserRole;
+  createdAt: Date;
+  updatedAt: Date;
+  lastSignedIn: Date;
+};
 
-/** Individual step outputs within a generation */
-export const generationSteps = mysqlTable("generation_steps", {
-  id: int("id").autoincrement().primaryKey(),
-  generationId: int("generationId").notNull(),
-  stepNumber: int("stepNumber").notNull(),
-  stepName: varchar("stepName", { length: 128 }).notNull(),
-  status: mysqlEnum("status", ["pending", "running", "completed", "failed"]).default("pending").notNull(),
-  /** LLM output for this step */
-  output: mediumtext("output"),
-  /** Brief summary of the output */
-  summary: varchar("summary", { length: 512 }),
-  errorMessage: mediumtext("errorMessage"),
-  startedAt: timestamp("startedAt"),
-  completedAt: timestamp("completedAt"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+export type InsertUser = {
+  id?: number;
+  openId: string;
+  name?: string | null;
+  email?: string | null;
+  loginMethod?: string | null;
+  role?: UserRole;
+  createdAt?: Date;
+  updatedAt?: Date;
+  lastSignedIn?: Date;
+};
 
-export type GenerationStep = typeof generationSteps.$inferSelect;
-export type InsertGenerationStep = typeof generationSteps.$inferInsert;
+export type SkillGeneration = {
+  id: number;
+  userId: number;
+  skillName: string;
+  domain: string;
+  features: string;
+  scenarios: string | null;
+  extraNotes: string | null;
+  status: GenerationStatus;
+  currentStep: number;
+  result: GenerationResult | null;
+  errorMessage: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt: Date | null;
+};
+
+export type InsertSkillGeneration = {
+  id?: number;
+  userId: number;
+  skillName: string;
+  domain: string;
+  features: string;
+  scenarios?: string | null;
+  extraNotes?: string | null;
+  status?: GenerationStatus;
+  currentStep?: number;
+  result?: GenerationResult | null;
+  errorMessage?: string | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+  completedAt?: Date | null;
+};
+
+export type GenerationStep = {
+  id: number;
+  generationId: number;
+  stepNumber: number;
+  stepName: string;
+  status: StepStatus;
+  output: string | null;
+  summary: string | null;
+  errorMessage: string | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+};
+
+export type InsertGenerationStep = {
+  id?: number;
+  generationId: number;
+  stepNumber: number;
+  stepName: string;
+  status?: StepStatus;
+  output?: string | null;
+  summary?: string | null;
+  errorMessage?: string | null;
+  startedAt?: Date | null;
+  completedAt?: Date | null;
+  createdAt?: Date;
+};

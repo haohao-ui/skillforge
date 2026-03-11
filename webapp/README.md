@@ -6,13 +6,13 @@ SkillForge 的 Web 应用版本，将 7 步 Skill 生成流程自动化为一键
 
 ## 技术栈
 
-| 层 | 技术 |
-|---|------|
-| 前端 | React 19 + Tailwind CSS 4 + shadcn/ui |
-| 后端 | Express 4 + tRPC 11 |
-| 数据库 | MySQL / TiDB（Drizzle ORM） |
-| LLM | OpenAI-compatible API（支持任意兼容提供商） |
-| 认证 | Manus OAuth（可选，可禁用） |
+| 层     | 技术                                        |
+| ------ | ------------------------------------------- |
+| 前端   | React 19 + Tailwind CSS 4 + shadcn/ui       |
+| 后端   | Express 4 + tRPC 11                         |
+| 数据库 | MySQL / TiDB / PostgreSQL（Drizzle ORM）    |
+| LLM    | OpenAI-compatible API（支持任意兼容提供商） |
+| 认证   | 本地免登录模式 / Manus OAuth（可选）        |
 
 ---
 
@@ -22,7 +22,7 @@ SkillForge 的 Web 应用版本，将 7 步 Skill 生成流程自动化为一键
 
 - Node.js 22+
 - pnpm
-- MySQL 或 TiDB 数据库
+- MySQL、TiDB 或 PostgreSQL 数据库
 - OpenAI-compatible LLM API Key
 
 ### 安装
@@ -42,15 +42,16 @@ cp .env.example .env
 
 ### 数据库初始化
 
-使用 `drizzle/` 目录下的 SQL 迁移文件初始化数据库：
+设置 `DATABASE_URL` 后，直接运行：
 
 ```bash
-# 按顺序执行迁移文件
-mysql -u user -p skillforge < drizzle/0000_striped_iron_man.sql
-mysql -u user -p skillforge < drizzle/0001_legal_thor.sql
-mysql -u user -p skillforge < drizzle/0002_supreme_gabe_jones.sql
-mysql -u user -p skillforge < drizzle/0003_wet_vance_astro.sql
+pnpm db:push
 ```
+
+`drizzle-kit` 会根据连接串自动选择方言：
+
+- `mysql://` / `mariadb://` / `tidb://` 使用 MySQL Schema 和现有迁移目录
+- `postgres://` / `postgresql://` 使用 PostgreSQL Schema，并在 `drizzle/postgres/` 下生成迁移
 
 ### 启动开发服务器
 
@@ -73,14 +74,36 @@ node dist/index.js
 
 本应用使用 OpenAI-compatible API 格式调用 LLM。你可以使用任何支持 `/v1/chat/completions` 端点的提供商：
 
-| 提供商 | API URL | 说明 |
-|--------|---------|------|
-| OpenAI | `https://api.openai.com/v1/chat/completions` | 推荐使用 GPT-4o |
-| DeepSeek | `https://api.deepseek.com/v1/chat/completions` | 性价比高 |
-| Together AI | `https://api.together.xyz/v1/chat/completions` | 支持多种开源模型 |
-| 自建 | `http://localhost:11434/v1/chat/completions` | Ollama 等本地部署 |
+| 提供商      | API URL                                        | 说明              |
+| ----------- | ---------------------------------------------- | ----------------- |
+| OpenAI      | `https://api.openai.com/v1/chat/completions`   | 推荐使用 GPT-4o   |
+| DeepSeek    | `https://api.deepseek.com/v1/chat/completions` | 性价比高          |
+| Together AI | `https://api.together.xyz/v1/chat/completions` | 支持多种开源模型  |
+| 自建        | `http://localhost:11434/v1/chat/completions`   | Ollama 等本地部署 |
 
-在 `.env` 中设置 `BUILT_IN_FORGE_API_URL` 和 `BUILT_IN_FORGE_API_KEY` 即可。
+在 `.env` 中设置 `BUILT_IN_FORGE_API_URL`、`BUILT_IN_FORGE_API_KEY`、`BUILT_IN_FORGE_MODEL` 和 `BUILT_IN_FORGE_MAX_TOKENS` 即可。
+
+`BUILT_IN_FORGE_API_URL` 支持两种写法：
+
+- Base URL：`https://api.deepseek.com`
+- 完整 endpoint：`https://api.deepseek.com/v1/chat/completions`
+
+推荐同时设置模型和 token 上限，例如：
+
+```env
+BUILT_IN_FORGE_API_URL=https://api.deepseek.com
+BUILT_IN_FORGE_API_KEY=your-key
+BUILT_IN_FORGE_MODEL=deepseek-chat
+BUILT_IN_FORGE_MAX_TOKENS=4096
+```
+
+注意：
+
+- 某些提供商不接受额外的私有推理字段，因此当前实现只发送通用 OpenAI-compatible 参数
+- `BUILT_IN_FORGE_MAX_TOKENS` 必须落在提供商允许的范围内；如果不确定，先用 `4096`
+- 如果设置 `USE_OPENAI_OAUTH=true`，请求会直接走 OpenAI OAuth 通道，不再使用 `BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY`；模型默认是 `gpt-5.4`，也可以用 `BUILT_IN_FORGE_MODEL` 覆盖
+- `.openai-credentials.json` 属于本地 OAuth 凭证，不能提交到 GitHub
+- 修改 `.env` 后需要重启 `pnpm dev`
 
 ---
 
@@ -108,23 +131,45 @@ webapp/
 
 ## 核心功能
 
-| 功能 | 说明 |
-|------|------|
+| 功能     | 说明                                         |
+| -------- | -------------------------------------------- |
 | 一键生成 | 输入 Skill 名称和描述，自动执行 7 步生成流程 |
-| 实时进度 | 每个步骤的执行状态实时展示 |
-| 结果预览 | 生成完成后预览 SKILL.md 和配套文件 |
-| ZIP 下载 | 一键打包下载完整 Skill 目录 |
-| 历史记录 | 查看和管理所有生成记录 |
-| 任务控制 | 支持取消运行中的任务、删除历史记录 |
+| 实时进度 | 每个步骤的执行状态实时展示                   |
+| 结果预览 | 生成完成后预览 SKILL.md 和配套文件           |
+| ZIP 下载 | 一键打包下载完整 Skill 目录                  |
+| 历史记录 | 查看和管理所有生成记录                       |
+| 任务控制 | 支持取消运行中的任务、删除历史记录           |
 
 ---
 
 ## 认证说明
 
-本应用默认集成了 Manus OAuth 认证。如果你不需要多用户认证功能，可以：
+本应用现在默认支持两种模式：
 
-1. 不配置 `JWT_SECRET`、`VITE_APP_ID` 等认证相关环境变量
-2. 修改 `server/routers.ts` 中的 `protectedProcedure` 为 `publicProcedure`
+1. 本地免登录模式
+2. Manus OAuth 模式
+
+如果 `JWT_SECRET`、`VITE_APP_ID`、`OAUTH_SERVER_URL`、`VITE_OAUTH_PORTAL_URL` 保持为空或示例占位值，服务会只在开发环境回退到本地免登录模式，并注入一个本地用户用于开发。
+
+只有在这 4 个值都配置为真实值时，才会启用 Manus OAuth。生产环境缺失这些值会直接拒绝启动，避免匿名管理员模式被带到线上。
+
+推荐 Manus OAuth 配置：
+
+```env
+OAUTH_SERVER_URL=https://api.manus.im
+VITE_OAUTH_PORTAL_URL=https://manus.im
+```
+
+## 可选 Analytics
+
+如果你要接入 Umami，可额外配置：
+
+```env
+VITE_ANALYTICS_ENDPOINT=https://your-umami.example.com
+VITE_ANALYTICS_WEBSITE_ID=your-website-id
+```
+
+未配置时不会注入 analytics 脚本，也不会产生占位符 URL 报错。
 
 ---
 

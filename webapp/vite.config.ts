@@ -15,8 +15,118 @@ const PROJECT_ROOT = import.meta.dirname;
 const LOG_DIR = path.join(PROJECT_ROOT, ".manus-logs");
 const MAX_LOG_SIZE_BYTES = 1 * 1024 * 1024; // 1MB per log file
 const TRIM_TARGET_BYTES = Math.floor(MAX_LOG_SIZE_BYTES * 0.6); // Trim to 60% to avoid constant re-trimming
+const DEBUG_COLLECTOR_PATH = "/__manus__/debug-collector.js";
+const DEBUG_COLLECTOR_SCRIPT = String.raw`(() => {
+  if (window.__manusDebugCollectorLoaded) return;
+  window.__manusDebugCollectorLoaded = true;
+
+  const pendingConsoleLogs = [];
+
+  const safeSerialize = value => {
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const flush = () => {
+    if (pendingConsoleLogs.length === 0) return;
+
+    const payload = JSON.stringify({
+      consoleLogs: pendingConsoleLogs.splice(0, pendingConsoleLogs.length),
+    });
+
+    if (navigator.sendBeacon) {
+      const blob = new Blob([payload], { type: "application/json" });
+      navigator.sendBeacon("/__manus__/logs", blob);
+      return;
+    }
+
+    fetch("/__manus__/logs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: payload,
+      keepalive: true,
+    }).catch(() => {});
+  };
+
+  const wrapConsole = level => {
+    const original = console[level];
+    console[level] = (...args) => {
+      pendingConsoleLogs.push({
+        level,
+        args: args.map(safeSerialize),
+        href: window.location.href,
+      });
+
+      if (pendingConsoleLogs.length >= 20) {
+        flush();
+      }
+
+      return original.apply(console, args);
+    };
+  };
+
+  ["log", "info", "warn", "error"].forEach(wrapConsole);
+
+  window.addEventListener("error", event => {
+    pendingConsoleLogs.push({
+      level: "error",
+      args: ["Unhandled error: " + event.message],
+      href: window.location.href,
+    });
+    flush();
+  });
+
+  window.addEventListener("unhandledrejection", event => {
+    pendingConsoleLogs.push({
+      level: "error",
+      args: ["Unhandled rejection: " + safeSerialize(event.reason)],
+      href: window.location.href,
+    });
+    flush();
+  });
+
+  window.addEventListener("beforeunload", flush);
+  window.setInterval(flush, 5000);
+})();`;
 
 type LogSource = "browserConsole" | "networkRequests" | "sessionReplay";
+
+function isConfigured(value: string | undefined) {
+  return Boolean(value && value.trim().length > 0);
+}
+
+function vitePluginConditionalAnalytics(): Plugin {
+  return {
+    name: "conditional-analytics",
+    transformIndexHtml(html) {
+      const endpoint = process.env.VITE_ANALYTICS_ENDPOINT?.trim();
+      const websiteId = process.env.VITE_ANALYTICS_WEBSITE_ID?.trim();
+
+      if (!isConfigured(endpoint) || !isConfigured(websiteId)) {
+        return html;
+      }
+
+      return {
+        html,
+        tags: [
+          {
+            tag: "script",
+            attrs: {
+              defer: true,
+              src: `${endpoint}/umami`,
+              "data-website-id": websiteId,
+            },
+            injectTo: "body",
+          },
+        ],
+      };
+    },
+  };
+}
 
 function ensureLogDir() {
   if (!fs.existsSync(LOG_DIR)) {
@@ -56,7 +166,7 @@ function writeToLogFile(source: LogSource, entries: unknown[]) {
   const logPath = path.join(LOG_DIR, `${source}.log`);
 
   // Format entries with timestamps
-  const lines = entries.map((entry) => {
+  const lines = entries.map(entry => {
     const ts = new Date().toISOString();
     return `[${ts}] ${JSON.stringify(entry)}`;
   });
@@ -88,7 +198,7 @@ function vitePluginManusDebugCollector(): Plugin {
           {
             tag: "script",
             attrs: {
-              src: "/__manus__/debug-collector.js",
+              src: DEBUG_COLLECTOR_PATH,
               defer: true,
             },
             injectTo: "head",
@@ -98,6 +208,15 @@ function vitePluginManusDebugCollector(): Plugin {
     },
 
     configureServer(server: ViteDevServer) {
+      server.middlewares.use(DEBUG_COLLECTOR_PATH, (req, res, next) => {
+        if (req.method !== "GET") {
+          return next();
+        }
+
+        res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+        res.end(DEBUG_COLLECTOR_SCRIPT);
+      });
+
       // POST /__manus__/logs: Browser sends logs (written directly to files)
       server.middlewares.use("/__manus__/logs", (req, res, next) => {
         if (req.method !== "POST") {
@@ -132,7 +251,7 @@ function vitePluginManusDebugCollector(): Plugin {
         }
 
         let body = "";
-        req.on("data", (chunk) => {
+        req.on("data", chunk => {
           body += chunk.toString();
         });
 
@@ -150,7 +269,14 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+const plugins = [
+  react(),
+  tailwindcss(),
+  jsxLocPlugin(),
+  vitePluginManusRuntime(),
+  vitePluginManusDebugCollector(),
+  vitePluginConditionalAnalytics(),
+];
 
 export default defineConfig({
   plugins,

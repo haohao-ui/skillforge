@@ -25,6 +25,9 @@ export function useAuth(options?: UseAuthOptions) {
   });
 
   const logout = useCallback(async () => {
+    if (meQuery.data?.loginMethod === "local") {
+      return;
+    }
     try {
       await logoutMutation.mutateAsync();
     } catch (error: unknown) {
@@ -51,6 +54,7 @@ export function useAuth(options?: UseAuthOptions) {
       loading: meQuery.isLoading || logoutMutation.isPending,
       error: meQuery.error ?? logoutMutation.error ?? null,
       isAuthenticated: Boolean(meQuery.data),
+      isLocalMode: meQuery.data?.loginMethod === "local",
     };
   }, [
     meQuery.data,
@@ -67,7 +71,7 @@ export function useAuth(options?: UseAuthOptions) {
     if (typeof window === "undefined") return;
     if (window.location.pathname === redirectPath) return;
 
-    window.location.href = redirectPath
+    window.location.href = redirectPath;
   }, [
     redirectOnUnauthenticated,
     redirectPath,

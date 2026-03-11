@@ -21,6 +21,14 @@ function isSecureRequest(req: Request) {
   return protoList.some(proto => proto.trim().toLowerCase() === "https");
 }
 
+function getBaseCookieOptions(req: Request) {
+  return {
+    httpOnly: true,
+    path: "/",
+    secure: isSecureRequest(req),
+  } satisfies Pick<CookieOptions, "httpOnly" | "path" | "secure">;
+}
+
 export function getSessionCookieOptions(
   req: Request
 ): Pick<CookieOptions, "domain" | "httpOnly" | "path" | "sameSite" | "secure"> {
@@ -40,9 +48,16 @@ export function getSessionCookieOptions(
   //       : undefined;
 
   return {
-    httpOnly: true,
-    path: "/",
+    ...getBaseCookieOptions(req),
     sameSite: "none",
-    secure: isSecureRequest(req),
+  };
+}
+
+export function getOAuthStateCookieOptions(
+  req: Request
+): Pick<CookieOptions, "httpOnly" | "path" | "sameSite" | "secure"> {
+  return {
+    ...getBaseCookieOptions(req),
+    sameSite: "lax",
   };
 }

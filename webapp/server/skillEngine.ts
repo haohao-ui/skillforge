@@ -1,7 +1,6 @@
 import { eq, and } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
-import { getDb } from "./db";
-import { skillGenerations, generationSteps } from "../drizzle/schema";
+import { getDatabase } from "./db";
 
 // Import prompts directly so esbuild can inline them into the bundle
 // (readFileSync won't work in production because the JSON file isn't copied to dist/)
@@ -21,7 +20,11 @@ const STEPS = [
 export { STEPS };
 
 // Export extraction functions for testing
-export { isValidSkillMd as _isValidSkillMd, extractSkillMdFromStep5 as _extractSkillMdFromStep5, extractResourceFiles as _extractResourceFiles };
+export {
+  isValidSkillMd as _isValidSkillMd,
+  extractSkillMdFromStep5 as _extractSkillMdFromStep5,
+  extractResourceFiles as _extractResourceFiles,
+};
 
 // ─────────────────────────────────────────────
 // Abort Signal Management
@@ -30,10 +33,18 @@ export { isValidSkillMd as _isValidSkillMd, extractSkillMdFromStep5 as _extractS
 /** In-memory map of generationId → AbortController for running pipelines */
 const runningPipelines = new Map<number, AbortController>();
 
+async function requireDatabase() {
+  const database = await getDatabase();
+  if (!database) throw new Error("Database not available");
+  return database;
+}
+
 /** Cancel a running generation pipeline */
 export async function cancelGeneration(generationId: number): Promise<boolean> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  const {
+    db,
+    tables: { skillGenerations, generationSteps },
+  } = await requireDatabase();
 
   // Signal the running pipeline to abort
   const controller = runningPipelines.get(generationId);
@@ -43,29 +54,41 @@ export async function cancelGeneration(generationId: number): Promise<boolean> {
   }
 
   // Update DB status to cancelled
-  await db.update(skillGenerations)
+  await db
+    .update(skillGenerations)
     .set({ status: "cancelled", errorMessage: "Cancelled by user" })
     .where(eq(skillGenerations.id, generationId));
 
   // Mark any running/pending steps as cancelled
-  const steps = await db.select().from(generationSteps)
+  const steps = await db
+    .select()
+    .from(generationSteps)
     .where(eq(generationSteps.generationId, generationId));
   for (const step of steps) {
     if (step.status === "running" || step.status === "pending") {
-      await db.update(generationSteps)
-        .set({ status: "failed", errorMessage: "Cancelled by user", completedAt: new Date() })
+      await db
+        .update(generationSteps)
+        .set({
+          status: "failed",
+          errorMessage: "Cancelled by user",
+          completedAt: new Date(),
+        })
         .where(eq(generationSteps.id, step.id));
     }
   }
 
-  console.log("[SkillEngine] Generation " + generationId + " cancelled by user");
+  console.log(
+    "[SkillEngine] Generation " + generationId + " cancelled by user"
+  );
   return true;
 }
 
 /** Delete a generation and all its steps */
 export async function deleteGeneration(generationId: number): Promise<boolean> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  const {
+    db,
+    tables: { skillGenerations, generationSteps },
+  } = await requireDatabase();
 
   // Cancel if running
   const controller = runningPipelines.get(generationId);
@@ -75,8 +98,12 @@ export async function deleteGeneration(generationId: number): Promise<boolean> {
   }
 
   // Delete steps first (foreign key dependency)
-  await db.delete(generationSteps).where(eq(generationSteps.generationId, generationId));
-  await db.delete(skillGenerations).where(eq(skillGenerations.id, generationId));
+  await db
+    .delete(generationSteps)
+    .where(eq(generationSteps.generationId, generationId));
+  await db
+    .delete(skillGenerations)
+    .where(eq(skillGenerations.id, generationId));
 
   console.log("[SkillEngine] Generation " + generationId + " deleted");
   return true;
@@ -117,10 +144,15 @@ function compressForContext(output: string, maxChars: number = 8000): string {
       continue;
     }
 
-    const isImportant = line.startsWith("#") || line.startsWith("---") ||
-      line.startsWith("- ") || line.startsWith("* ") ||
-      line.startsWith("|") || line.match(/^\d+\./) ||
-      line.startsWith("name:") || line.startsWith("description:");
+    const isImportant =
+      line.startsWith("#") ||
+      line.startsWith("---") ||
+      line.startsWith("- ") ||
+      line.startsWith("* ") ||
+      line.startsWith("|") ||
+      line.match(/^\d+\./) ||
+      line.startsWith("name:") ||
+      line.startsWith("description:");
 
     if (isImportant || currentSize < maxChars * 0.5) {
       importantLines.push(line);
@@ -141,47 +173,86 @@ function compressForContext(output: string, maxChars: number = 8000): string {
 // Context Block Builder
 // ─────────────────────────────────────────────
 
-function buildContextBlock(previousOutputs: string[], currentStep: number): string {
+function buildContextBlock(
+  previousOutputs: string[],
+  currentStep: number
+): string {
   if (previousOutputs.length === 0) return "";
 
   const contextParts: string[] = [];
 
   switch (currentStep) {
     case 2:
-      contextParts.push("### Step 1 Output (Requirements Analysis)\n" + compressForContext(previousOutputs[0], 10000));
+      contextParts.push(
+        "### Step 1 Output (Requirements Analysis)\n" +
+          compressForContext(previousOutputs[0], 10000)
+      );
       break;
     case 3:
-      contextParts.push("### Step 1 Output (Requirements Analysis)\n" + compressForContext(previousOutputs[0], 8000));
-      contextParts.push("### Step 2 Output (Architecture Decisions)\n" + compressForContext(previousOutputs[1], 8000));
+      contextParts.push(
+        "### Step 1 Output (Requirements Analysis)\n" +
+          compressForContext(previousOutputs[0], 8000)
+      );
+      contextParts.push(
+        "### Step 2 Output (Architecture Decisions)\n" +
+          compressForContext(previousOutputs[1], 8000)
+      );
       break;
     case 4:
       // Step 4 needs full context from 1-3 for complete SKILL.md generation
-      contextParts.push("### Step 1 Output (Requirements Analysis)\n" + compressForContext(previousOutputs[0], 8000));
-      contextParts.push("### Step 2 Output (Architecture Decisions)\n" + compressForContext(previousOutputs[1], 8000));
+      contextParts.push(
+        "### Step 1 Output (Requirements Analysis)\n" +
+          compressForContext(previousOutputs[0], 8000)
+      );
+      contextParts.push(
+        "### Step 2 Output (Architecture Decisions)\n" +
+          compressForContext(previousOutputs[1], 8000)
+      );
       contextParts.push("### Step 3 Output (Metadata)\n" + previousOutputs[2]);
       break;
     case 5:
       // Step 5 (audit) needs full SKILL.md from Step 4 + metadata
-      contextParts.push("### Step 1 Output (Requirements Analysis)\n" + compressForContext(previousOutputs[0], 5000));
+      contextParts.push(
+        "### Step 1 Output (Requirements Analysis)\n" +
+          compressForContext(previousOutputs[0], 5000)
+      );
       contextParts.push("### Step 3 Output (Metadata)\n" + previousOutputs[2]);
-      contextParts.push("### Step 4 Output (SKILL.md Body)\n" + previousOutputs[3]);
+      contextParts.push(
+        "### Step 4 Output (SKILL.md Body)\n" + previousOutputs[3]
+      );
       break;
     case 6:
       // Step 6 needs architecture + full SKILL.md for accurate resource generation
-      contextParts.push("### Step 1 Output (Requirements Analysis)\n" + compressForContext(previousOutputs[0], 5000));
-      contextParts.push("### Step 2 Output (Architecture Decisions - Resource Planning)\n" + compressForContext(previousOutputs[1], 10000));
-      contextParts.push("### Step 4 Output (SKILL.md Body)\n" + compressForContext(previousOutputs[3], 10000));
+      contextParts.push(
+        "### Step 1 Output (Requirements Analysis)\n" +
+          compressForContext(previousOutputs[0], 5000)
+      );
+      contextParts.push(
+        "### Step 2 Output (Architecture Decisions - Resource Planning)\n" +
+          compressForContext(previousOutputs[1], 10000)
+      );
+      contextParts.push(
+        "### Step 4 Output (SKILL.md Body)\n" +
+          compressForContext(previousOutputs[3], 10000)
+      );
       break;
     case 7:
       // Step 7 only needs metadata + skill name
-      contextParts.push("### Step 3 Output (Metadata)\n" + compressForContext(previousOutputs[2], 3000));
+      contextParts.push(
+        "### Step 3 Output (Metadata)\n" +
+          compressForContext(previousOutputs[2], 3000)
+      );
       break;
     default:
       break;
   }
 
   if (contextParts.length === 0) return "";
-  return "\n\n---\n## Previous Steps Output\n\n" + contextParts.join("\n\n---\n\n") + "\n\n---\n\n";
+  return (
+    "\n\n---\n## Previous Steps Output\n\n" +
+    contextParts.join("\n\n---\n\n") +
+    "\n\n---\n\n"
+  );
 }
 
 // ─────────────────────────────────────────────
@@ -190,7 +261,13 @@ function buildContextBlock(previousOutputs: string[], currentStep: number): stri
 
 function buildStepPrompt(
   stepNumber: number,
-  userInput: { skillName: string; domain: string; features: string; scenarios?: string | null; extraNotes?: string | null },
+  userInput: {
+    skillName: string;
+    domain: string;
+    features: string;
+    scenarios?: string | null;
+    extraNotes?: string | null;
+  },
   previousOutputs: string[]
 ): string {
   const contextBlock = buildContextBlock(previousOutputs, stepNumber);
@@ -201,13 +278,19 @@ function buildStepPrompt(
     "- **Domain**: " + userInput.domain,
     "- **Features**: " + userInput.features,
   ];
-  if (userInput.scenarios) userDesc.push("- **Scenarios**: " + userInput.scenarios);
-  if (userInput.extraNotes) userDesc.push("- **Notes**: " + userInput.extraNotes);
+  if (userInput.scenarios)
+    userDesc.push("- **Scenarios**: " + userInput.scenarios);
+  if (userInput.extraNotes)
+    userDesc.push("- **Notes**: " + userInput.extraNotes);
 
   const userDescStr = userDesc.join("\n");
 
-  const stepTemplate = (PROMPTS.steps as Record<string, string>)[String(stepNumber)] || "";
-  const stepPrompt = stepTemplate.replace(/\{\{SKILL_NAME\}\}/g, userInput.skillName);
+  const stepTemplate =
+    (PROMPTS.steps as Record<string, string>)[String(stepNumber)] || "";
+  const stepPrompt = stepTemplate.replace(
+    /\{\{SKILL_NAME\}\}/g,
+    userInput.skillName
+  );
 
   if (stepNumber === 1) {
     return userDescStr + "\n\n" + stepPrompt;
@@ -221,10 +304,30 @@ function buildStepPrompt(
 // ─────────────────────────────────────────────
 
 function extractSummary(output: string, stepNumber: number): string {
-  const stepNames = ["", "Requirements analyzed", "Architecture decided", "Metadata generated", "SKILL.md body generated", "Quality audit done", "Resources generated", "Usage guide generated"];
+  const stepNames = [
+    "",
+    "Requirements analyzed",
+    "Architecture decided",
+    "Metadata generated",
+    "SKILL.md body generated",
+    "Quality audit done",
+    "Resources generated",
+    "Usage guide generated",
+  ];
   const lines = output.split("\n").filter((l: string) => l.trim());
-  const firstMeaningful = lines.find((l: string) => l.startsWith("#") || l.startsWith("##") || (l.length > 15 && !l.startsWith("```"))) || lines[0] || "";
-  const cleaned = firstMeaningful.replace(/^#+\s*/, "").replace(/^```\w*\s*/, "").slice(0, 200);
+  const firstMeaningful =
+    lines.find(
+      (l: string) =>
+        l.startsWith("#") ||
+        l.startsWith("##") ||
+        (l.length > 15 && !l.startsWith("```"))
+    ) ||
+    lines[0] ||
+    "";
+  const cleaned = firstMeaningful
+    .replace(/^#+\s*/, "")
+    .replace(/^```\w*\s*/, "")
+    .slice(0, 200);
   return stepNames[stepNumber] + ": " + cleaned;
 }
 
@@ -245,21 +348,34 @@ async function invokeLLMWithRetry(
         messages: messages as any,
       });
 
-      const output = typeof result.choices[0]?.message?.content === "string"
-        ? result.choices[0].message.content
-        : JSON.stringify(result.choices[0]?.message?.content);
+      const output =
+        typeof result.choices[0]?.message?.content === "string"
+          ? result.choices[0].message.content
+          : JSON.stringify(result.choices[0]?.message?.content);
 
       return output;
     } catch (error: any) {
       lastError = error;
       const msg = error.message?.slice(0, 200) || "";
-      console.warn("[SkillEngine] LLM call attempt " + attempt + "/" + maxRetries + " failed: " + msg);
+      console.warn(
+        "[SkillEngine] LLM call attempt " +
+          attempt +
+          "/" +
+          maxRetries +
+          " failed: " +
+          msg
+      );
 
       if (attempt < maxRetries) {
-        const is403or500 = msg.includes("403") || msg.includes("Forbidden") || msg.includes("rate") || msg.includes("500") || msg.includes("Internal");
+        const is403or500 =
+          msg.includes("403") ||
+          msg.includes("Forbidden") ||
+          msg.includes("rate") ||
+          msg.includes("500") ||
+          msg.includes("Internal");
         const baseDelay = is403or500 ? 10000 : 3000;
         const delay = baseDelay * Math.pow(1.5, attempt - 1);
-        console.log("[SkillEngine] Retrying in " + (delay / 1000) + "s...");
+        console.log("[SkillEngine] Retrying in " + delay / 1000 + "s...");
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -286,7 +402,9 @@ function isValidSkillMd(content: string, skillName: string): boolean {
   const relatedToSkill = nameRegex.test(content);
   // A valid SKILL.md should have frontmatter with name + description,
   // OR at least be clearly related to the target skill
-  return (hasFrontmatter && hasDescription) || (hasFrontmatter && relatedToSkill);
+  return (
+    (hasFrontmatter && hasDescription) || (hasFrontmatter && relatedToSkill)
+  );
 }
 
 /**
@@ -299,7 +417,12 @@ function isValidSkillMd(content: string, skillName: string): boolean {
  * including example documents (e.g., Docker Compose tutorials) that are NOT the actual SKILL.md.
  * We must validate each candidate block to ensure it's the real SKILL.md.
  */
-function extractSkillMdFromStep5(step5Output: string, step3Output: string, step4Output: string, skillName: string = ""): string {
+function extractSkillMdFromStep5(
+  step5Output: string,
+  step3Output: string,
+  step4Output: string,
+  skillName: string = ""
+): string {
   // ── Strategy 0 (highest priority): Find PART B section, then extract markdown block within it ──
   const partBPatterns = [
     /##\s*PART\s*B[^\n]*/i,
@@ -324,23 +447,41 @@ function extractSkillMdFromStep5(step5Output: string, step3Output: string, step4
         }
       }
       // Prefer blocks with valid YAML frontmatter
-      const validBlocks = mdBlocksAfterB.filter(b => isValidSkillMd(b, skillName));
+      const validBlocks = mdBlocksAfterB.filter(b =>
+        isValidSkillMd(b, skillName)
+      );
       if (validBlocks.length > 0) {
-        const best = validBlocks.reduce((a, b) => a.length > b.length ? a : b);
-        console.log("[SkillEngine] Strategy 0: Extracted SKILL.md from PART B section with frontmatter validation (" + best.length + " chars)");
+        const best = validBlocks.reduce((a, b) =>
+          a.length > b.length ? a : b
+        );
+        console.log(
+          "[SkillEngine] Strategy 0: Extracted SKILL.md from PART B section with frontmatter validation (" +
+            best.length +
+            " chars)"
+        );
         return best;
       }
       // If no validated blocks, try any code block after PART B
       if (mdBlocksAfterB.length > 0) {
-        const best = mdBlocksAfterB.reduce((a, b) => a.length > b.length ? a : b);
-        console.log("[SkillEngine] Strategy 0b: Extracted SKILL.md from PART B section (no frontmatter validation) (" + best.length + " chars)");
+        const best = mdBlocksAfterB.reduce((a, b) =>
+          a.length > b.length ? a : b
+        );
+        console.log(
+          "[SkillEngine] Strategy 0b: Extracted SKILL.md from PART B section (no frontmatter validation) (" +
+            best.length +
+            " chars)"
+        );
         return best;
       }
       // Try any code block (not just markdown-tagged) after PART B
       const anyCodeMatch = afterPartB.match(/```[\w]*\n([\s\S]*?)```/);
       if (anyCodeMatch && anyCodeMatch[1].trim().length > 500) {
         const content = anyCodeMatch[1].trim();
-        console.log("[SkillEngine] Strategy 0c: Extracted from PART B generic code block (" + content.length + " chars)");
+        console.log(
+          "[SkillEngine] Strategy 0c: Extracted from PART B generic code block (" +
+            content.length +
+            " chars)"
+        );
         return content;
       }
     }
@@ -358,14 +499,28 @@ function extractSkillMdFromStep5(step5Output: string, step3Output: string, step4
 
   if (allMarkdownBlocks.length > 0) {
     // First try: blocks with valid YAML frontmatter
-    const validBlocks = allMarkdownBlocks.filter(b => isValidSkillMd(b, skillName));
+    const validBlocks = allMarkdownBlocks.filter(b =>
+      isValidSkillMd(b, skillName)
+    );
     if (validBlocks.length > 0) {
-      const best = validBlocks.reduce((a, b) => a.length > b.length ? a : b);
-      console.log("[SkillEngine] Strategy 1a: Extracted validated SKILL.md markdown block (" + best.length + " chars, " + validBlocks.length + " valid of " + allMarkdownBlocks.length + " total)");
+      const best = validBlocks.reduce((a, b) => (a.length > b.length ? a : b));
+      console.log(
+        "[SkillEngine] Strategy 1a: Extracted validated SKILL.md markdown block (" +
+          best.length +
+          " chars, " +
+          validBlocks.length +
+          " valid of " +
+          allMarkdownBlocks.length +
+          " total)"
+      );
       return best;
     }
     // If no validated blocks, log warning and skip to safer strategies
-    console.warn("[SkillEngine] Strategy 1: Found " + allMarkdownBlocks.length + " markdown blocks but NONE passed validation. Skipping to avoid extracting wrong content.");
+    console.warn(
+      "[SkillEngine] Strategy 1: Found " +
+        allMarkdownBlocks.length +
+        " markdown blocks but NONE passed validation. Skipping to avoid extracting wrong content."
+    );
   }
 
   // ── Strategy 2: Find YAML frontmatter in raw text and extract everything after it ──
@@ -374,26 +529,46 @@ function extractSkillMdFromStep5(step5Output: string, step3Output: string, step4
   const yamlCandidates: { index: number; content: string }[] = [];
   while ((m = fmSearchPattern.exec(step5Output)) !== null) {
     const fmContent = m[1];
-    if (fmContent.includes("name:") && (fmContent.includes("description:") || fmContent.includes(skillName))) {
+    if (
+      fmContent.includes("name:") &&
+      (fmContent.includes("description:") || fmContent.includes(skillName))
+    ) {
       // Found a valid YAML frontmatter. Extract everything from here to the end of output.
       const fromFrontmatter = step5Output.slice(m.index);
       if (fromFrontmatter.length > 500) {
-        yamlCandidates.push({ index: m.index, content: fromFrontmatter.trim() });
+        yamlCandidates.push({
+          index: m.index,
+          content: fromFrontmatter.trim(),
+        });
       }
     }
   }
   if (yamlCandidates.length > 0) {
     // Pick the one that appears latest in the output (most likely to be the final/optimized version)
     const best = yamlCandidates[yamlCandidates.length - 1].content;
-    console.log("[SkillEngine] Strategy 2: Extracted SKILL.md from YAML frontmatter in raw text (" + best.length + " chars, at index " + yamlCandidates[yamlCandidates.length - 1].index + ")");
+    console.log(
+      "[SkillEngine] Strategy 2: Extracted SKILL.md from YAML frontmatter in raw text (" +
+        best.length +
+        " chars, at index " +
+        yamlCandidates[yamlCandidates.length - 1].index +
+        ")"
+    );
     return best;
   }
 
   // ── Strategy 3 (reliable fallback): Combine Step 3 (frontmatter) + Step 4 (body) ──
   const frontmatterMatch = step3Output.match(/(---\n[\s\S]*?---)/);
-  const frontmatter = frontmatterMatch ? frontmatterMatch[1] : "---\nname: " + (skillName || "skill") + "\ndescription: |\n  Generated skill\n---";
+  const frontmatter = frontmatterMatch
+    ? frontmatterMatch[1]
+    : "---\nname: " +
+      (skillName || "skill") +
+      "\ndescription: |\n  Generated skill\n---";
   const combined = frontmatter + "\n\n" + step4Output;
-  console.log("[SkillEngine] Strategy 3 (fallback): Combined Step 3 frontmatter + Step 4 body (" + combined.length + " chars)");
+  console.log(
+    "[SkillEngine] Strategy 3 (fallback): Combined Step 3 frontmatter + Step 4 body (" +
+      combined.length +
+      " chars)"
+  );
   return combined;
 }
 
@@ -401,7 +576,9 @@ function extractSkillMdFromStep5(step5Output: string, step3Output: string, step4
  * Extract resource files from Step 6 output.
  * Step 6 uses the format: ### FILE: `path` followed by code block
  */
-function extractResourceFiles(step6Output: string): { path: string; content: string }[] {
+function extractResourceFiles(
+  step6Output: string
+): { path: string; content: string }[] {
   if (!step6Output) return [];
 
   const files: { path: string; content: string }[] = [];
@@ -409,7 +586,12 @@ function extractResourceFiles(step6Output: string): { path: string; content: str
 
   function addFile(fpath: string, content: string) {
     const normalized = fpath.replace(/^\.\//, "").trim();
-    if (normalized && content && normalized !== "SKILL.md" && !seen.has(normalized)) {
+    if (
+      normalized &&
+      content &&
+      normalized !== "SKILL.md" &&
+      !seen.has(normalized)
+    ) {
       seen.add(normalized);
       files.push({ path: normalized, content: content.trim() });
     }
@@ -441,12 +623,17 @@ function extractResourceFiles(step6Output: string): { path: string; content: str
   }
 
   // Pattern 5: Any heading with a file-like name followed by code block
-  const p5 = new RegExp("^(?:#+\\s+)?(?:\\*\\*)?(?:`)?([a-zA-Z0-9_\\-./]+\\.\\w{1,10})(?:`)?(?:\\*\\*)?\\s*\\n+```[\\w]*\\n([\\s\\S]*?)```", "gm");
+  const p5 = new RegExp(
+    "^(?:#+\\s+)?(?:\\*\\*)?(?:`)?([a-zA-Z0-9_\\-./]+\\.\\w{1,10})(?:`)?(?:\\*\\*)?\\s*\\n+```[\\w]*\\n([\\s\\S]*?)```",
+    "gm"
+  );
   while ((match = p5.exec(step6Output)) !== null) {
     addFile(match[1], match[2]);
   }
 
-  console.log("[SkillEngine] Extracted " + files.length + " resource files total");
+  console.log(
+    "[SkillEngine] Extracted " + files.length + " resource files total"
+  );
   return files;
 }
 
@@ -458,7 +645,13 @@ function assembleResult(
   userInput: { skillName: string },
   previousOutputs: string[],
   completedSteps: number
-): { directory_tree: string; files: { path: string; content: string }[]; usage: any; validation_passed: boolean; partial: boolean } {
+): {
+  directory_tree: string;
+  files: { path: string; content: string }[];
+  usage: any;
+  validation_passed: boolean;
+  partial: boolean;
+} {
   let skillMdContent = "";
   const resourceFiles: { path: string; content: string }[] = [];
   let partial = false;
@@ -475,7 +668,11 @@ function assembleResult(
   } else if (previousOutputs[3] && previousOutputs[2]) {
     // Step 4 completed - combine frontmatter + body
     const frontmatterMatch = previousOutputs[2].match(/(---\n[\s\S]*?---)/);
-    const frontmatter = frontmatterMatch ? frontmatterMatch[1] : "---\nname: " + userInput.skillName + "\ndescription: |\n  Generated skill\n---";
+    const frontmatter = frontmatterMatch
+      ? frontmatterMatch[1]
+      : "---\nname: " +
+        userInput.skillName +
+        "\ndescription: |\n  Generated skill\n---";
     skillMdContent = frontmatter + "\n\n" + previousOutputs[3];
     partial = true;
   } else if (previousOutputs[3]) {
@@ -508,7 +705,9 @@ function assembleResult(
       }
     }
 
-    const allEntries = Array.from(dirs).sort().concat(fileList.map(f => f.path));
+    const allEntries = Array.from(dirs)
+      .sort()
+      .concat(fileList.map(f => f.path));
     const uniqueSet = new Set(allEntries);
     const unique = Array.from(uniqueSet).sort();
 
@@ -525,15 +724,20 @@ function assembleResult(
 
   // Usage info
   const usageInfo: any = {
-    installation: "Copy the " + userInput.skillName + "/ directory to your AI platform's skills directory.",
+    installation:
+      "Copy the " +
+      userInput.skillName +
+      "/ directory to your AI platform's skills directory.",
     trigger_examples: ["Please use the " + userInput.skillName + " skill"],
-    iteration_suggestions: "Continuously optimize SKILL.md based on usage feedback.",
+    iteration_suggestions:
+      "Continuously optimize SKILL.md based on usage feedback.",
   };
 
   // Try to extract trigger examples from Step 7
   if (previousOutputs[6]) {
     const triggerMatches: string[] = [];
-    const triggerPattern = /[-*]\s*[""\u201c\u300c]([^""\u201d\u300d\n]+)[""\u201d\u300d]/g;
+    const triggerPattern =
+      /[-*]\s*[""\u201c\u300c]([^""\u201d\u300d\n]+)[""\u201d\u300d]/g;
     let tm;
     while ((tm = triggerPattern.exec(previousOutputs[6])) !== null) {
       triggerMatches.push(tm[1]);
@@ -556,15 +760,23 @@ function assembleResult(
 // Main Pipeline
 // ─────────────────────────────────────────────
 
-export async function runGenerationPipeline(generationId: number): Promise<void> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
+export async function runGenerationPipeline(
+  generationId: number
+): Promise<void> {
+  const {
+    db,
+    tables: { skillGenerations, generationSteps },
+  } = await requireDatabase();
 
   // Register abort controller for this pipeline
   const abortController = new AbortController();
   runningPipelines.set(generationId, abortController);
 
-  const [gen] = await db.select().from(skillGenerations).where(eq(skillGenerations.id, generationId)).limit(1);
+  const [gen] = await db
+    .select()
+    .from(skillGenerations)
+    .where(eq(skillGenerations.id, generationId))
+    .limit(1);
   if (!gen) throw new Error("Generation " + generationId + " not found");
 
   const userInput = {
@@ -575,7 +787,10 @@ export async function runGenerationPipeline(generationId: number): Promise<void>
     extraNotes: gen.extraNotes,
   };
 
-  await db.update(skillGenerations).set({ status: "running", currentStep: 1 }).where(eq(skillGenerations.id, generationId));
+  await db
+    .update(skillGenerations)
+    .set({ status: "running", currentStep: 1 })
+    .where(eq(skillGenerations.id, generationId));
 
   for (const step of STEPS) {
     await db.insert(generationSteps).values({
@@ -595,92 +810,188 @@ export async function runGenerationPipeline(generationId: number): Promise<void>
     for (const step of STEPS) {
       // Check abort signal before each step
       if (abortController.signal.aborted) {
-        console.log("[SkillEngine] Generation " + generationId + " aborted before step " + step.number);
+        console.log(
+          "[SkillEngine] Generation " +
+            generationId +
+            " aborted before step " +
+            step.number
+        );
         runningPipelines.delete(generationId);
         return;
       }
 
-      await db.update(skillGenerations).set({ currentStep: step.number }).where(eq(skillGenerations.id, generationId));
+      await db
+        .update(skillGenerations)
+        .set({ currentStep: step.number })
+        .where(eq(skillGenerations.id, generationId));
 
-      await db.update(generationSteps)
+      await db
+        .update(generationSteps)
         .set({ status: "running", startedAt: new Date() })
-        .where(and(eq(generationSteps.generationId, generationId), eq(generationSteps.stepNumber, step.number)));
+        .where(
+          and(
+            eq(generationSteps.generationId, generationId),
+            eq(generationSteps.stepNumber, step.number)
+          )
+        );
 
       try {
         const prompt = buildStepPrompt(step.number, userInput, previousOutputs);
-        console.log("[SkillEngine] Step " + step.number + " prompt length: " + prompt.length + " chars");
+        console.log(
+          "[SkillEngine] Step " +
+            step.number +
+            " prompt length: " +
+            prompt.length +
+            " chars"
+        );
 
         const output = await invokeLLMWithRetry([
           { role: "system", content: systemPrompt },
           { role: "user", content: prompt },
         ]);
 
-        console.log("[SkillEngine] Step " + step.number + " output length: " + output.length + " chars");
+        console.log(
+          "[SkillEngine] Step " +
+            step.number +
+            " output length: " +
+            output.length +
+            " chars"
+        );
 
         const summary = extractSummary(output, step.number);
         previousOutputs.push(output);
         lastCompletedStep = step.number;
 
-        await db.update(generationSteps)
-          .set({ status: "completed", output, summary, completedAt: new Date() })
-          .where(and(eq(generationSteps.generationId, generationId), eq(generationSteps.stepNumber, step.number)));
-
+        await db
+          .update(generationSteps)
+          .set({
+            status: "completed",
+            output,
+            summary,
+            completedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(generationSteps.generationId, generationId),
+              eq(generationSteps.stepNumber, step.number)
+            )
+          );
       } catch (stepError: any) {
-        console.error("[SkillEngine] Step " + step.number + " failed after retries:", stepError.message?.slice(0, 500));
-        await db.update(generationSteps)
-          .set({ status: "failed", errorMessage: safeErrorMessage(stepError), completedAt: new Date() })
-          .where(and(eq(generationSteps.generationId, generationId), eq(generationSteps.stepNumber, step.number)));
+        console.error(
+          "[SkillEngine] Step " + step.number + " failed after retries:",
+          stepError.message?.slice(0, 500)
+        );
+        await db
+          .update(generationSteps)
+          .set({
+            status: "failed",
+            errorMessage: safeErrorMessage(stepError),
+            completedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(generationSteps.generationId, generationId),
+              eq(generationSteps.stepNumber, step.number)
+            )
+          );
 
         // If Step 5+ fails, we can still assemble a partial result from completed steps
         if (lastCompletedStep >= 4) {
-          console.log("[SkillEngine] Step " + step.number + " failed but we have " + lastCompletedStep + " completed steps. Assembling partial result...");
+          console.log(
+            "[SkillEngine] Step " +
+              step.number +
+              " failed but we have " +
+              lastCompletedStep +
+              " completed steps. Assembling partial result..."
+          );
 
           // Fill in empty outputs for failed steps
           while (previousOutputs.length < 7) {
             previousOutputs.push("");
           }
 
-          const resultData = assembleResult(userInput, previousOutputs, lastCompletedStep);
+          const resultData = assembleResult(
+            userInput,
+            previousOutputs,
+            lastCompletedStep
+          );
 
           if (resultData.files.length > 0) {
-            await db.update(skillGenerations)
+            await db
+              .update(skillGenerations)
               .set({
                 status: "completed",
                 result: resultData,
-                errorMessage: "Steps 1-" + lastCompletedStep + " completed. Step " + step.number + " failed: " + safeErrorMessage(stepError).slice(0, 200),
+                errorMessage:
+                  "Steps 1-" +
+                  lastCompletedStep +
+                  " completed. Step " +
+                  step.number +
+                  " failed: " +
+                  safeErrorMessage(stepError).slice(0, 200),
                 completedAt: new Date(),
               })
               .where(eq(skillGenerations.id, generationId));
 
-            console.log("[SkillEngine] Generation " + generationId + " partially completed with " + resultData.files.length + " files (steps 1-" + lastCompletedStep + ")");
+            console.log(
+              "[SkillEngine] Generation " +
+                generationId +
+                " partially completed with " +
+                resultData.files.length +
+                " files (steps 1-" +
+                lastCompletedStep +
+                ")"
+            );
             return;
           }
         }
 
         // If we don't have enough steps for a partial result, mark as failed
-        await db.update(skillGenerations)
-          .set({ status: "failed", errorMessage: "Step " + step.number + " failed: " + safeErrorMessage(stepError) })
+        await db
+          .update(skillGenerations)
+          .set({
+            status: "failed",
+            errorMessage:
+              "Step " + step.number + " failed: " + safeErrorMessage(stepError),
+          })
           .where(eq(skillGenerations.id, generationId));
         return;
       }
     }
 
     // ── Assemble Final Result (code-level, not LLM-level) ──
-    console.log("[SkillEngine] Assembling final Skill package from step outputs...");
+    console.log(
+      "[SkillEngine] Assembling final Skill package from step outputs..."
+    );
 
     const resultData = assembleResult(userInput, previousOutputs, 7);
 
-    console.log("[SkillEngine] Assembled " + resultData.files.length + " files: " + resultData.files.map(f => f.path).join(", "));
+    console.log(
+      "[SkillEngine] Assembled " +
+        resultData.files.length +
+        " files: " +
+        resultData.files.map(f => f.path).join(", ")
+    );
 
-    await db.update(skillGenerations)
+    await db
+      .update(skillGenerations)
       .set({ status: "completed", result: resultData, completedAt: new Date() })
       .where(eq(skillGenerations.id, generationId));
 
-    console.log("[SkillEngine] Generation " + generationId + " completed with " + resultData.files.length + " files");
-
+    console.log(
+      "[SkillEngine] Generation " +
+        generationId +
+        " completed with " +
+        resultData.files.length +
+        " files"
+    );
   } catch (error: any) {
-    console.error("[SkillEngine] Pipeline failed for generation " + generationId + ":", safeErrorMessage(error));
-    await db.update(skillGenerations)
+    console.error(
+      "[SkillEngine] Pipeline failed for generation " + generationId + ":",
+      safeErrorMessage(error)
+    );
+    await db
+      .update(skillGenerations)
       .set({ status: "failed", errorMessage: safeErrorMessage(error) })
       .where(eq(skillGenerations.id, generationId));
   } finally {
@@ -692,18 +1003,28 @@ export async function runGenerationPipeline(generationId: number): Promise<void>
 // Resume Pipeline (retry from failed step)
 // ─────────────────────────────────────────────
 
-export async function resumeGenerationPipeline(generationId: number): Promise<void> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
+export async function resumeGenerationPipeline(
+  generationId: number
+): Promise<void> {
+  const {
+    db,
+    tables: { skillGenerations, generationSteps },
+  } = await requireDatabase();
 
   // Register abort controller for resume
   const abortController = new AbortController();
   runningPipelines.set(generationId, abortController);
 
-  const [gen] = await db.select().from(skillGenerations).where(eq(skillGenerations.id, generationId)).limit(1);
+  const [gen] = await db
+    .select()
+    .from(skillGenerations)
+    .where(eq(skillGenerations.id, generationId))
+    .limit(1);
   if (!gen) throw new Error("Generation " + generationId + " not found");
 
-  const steps = await db.select().from(generationSteps)
+  const steps = await db
+    .select()
+    .from(generationSteps)
     .where(eq(generationSteps.generationId, generationId))
     .orderBy(generationSteps.stepNumber);
 
@@ -721,11 +1042,18 @@ export async function resumeGenerationPipeline(generationId: number): Promise<vo
   }
 
   if (resumeFromStep === 0) {
-    console.log("[SkillEngine] All steps already completed for generation " + generationId);
+    console.log(
+      "[SkillEngine] All steps already completed for generation " + generationId
+    );
     return;
   }
 
-  console.log("[SkillEngine] Resuming generation " + generationId + " from step " + resumeFromStep);
+  console.log(
+    "[SkillEngine] Resuming generation " +
+      generationId +
+      " from step " +
+      resumeFromStep
+  );
 
   const userInput = {
     skillName: gen.skillName,
@@ -735,7 +1063,10 @@ export async function resumeGenerationPipeline(generationId: number): Promise<vo
     extraNotes: gen.extraNotes,
   };
 
-  await db.update(skillGenerations).set({ status: "running", currentStep: resumeFromStep, errorMessage: null }).where(eq(skillGenerations.id, generationId));
+  await db
+    .update(skillGenerations)
+    .set({ status: "running", currentStep: resumeFromStep, errorMessage: null })
+    .where(eq(skillGenerations.id, generationId));
 
   const systemPrompt = PROMPTS.system;
   let lastCompletedStep = resumeFromStep - 1;
@@ -746,53 +1077,120 @@ export async function resumeGenerationPipeline(generationId: number): Promise<vo
 
       // Check abort signal before each step
       if (abortController.signal.aborted) {
-        console.log("[SkillEngine] Resume generation " + generationId + " aborted before step " + step.number);
+        console.log(
+          "[SkillEngine] Resume generation " +
+            generationId +
+            " aborted before step " +
+            step.number
+        );
         runningPipelines.delete(generationId);
         return;
       }
 
-      await db.update(skillGenerations).set({ currentStep: step.number }).where(eq(skillGenerations.id, generationId));
+      await db
+        .update(skillGenerations)
+        .set({ currentStep: step.number })
+        .where(eq(skillGenerations.id, generationId));
 
       // Reset the step status
-      await db.update(generationSteps)
-        .set({ status: "running", startedAt: new Date(), output: null, summary: null, errorMessage: null, completedAt: null })
-        .where(and(eq(generationSteps.generationId, generationId), eq(generationSteps.stepNumber, step.number)));
+      await db
+        .update(generationSteps)
+        .set({
+          status: "running",
+          startedAt: new Date(),
+          output: null,
+          summary: null,
+          errorMessage: null,
+          completedAt: null,
+        })
+        .where(
+          and(
+            eq(generationSteps.generationId, generationId),
+            eq(generationSteps.stepNumber, step.number)
+          )
+        );
 
       try {
         const prompt = buildStepPrompt(step.number, userInput, previousOutputs);
-        console.log("[SkillEngine] Resume Step " + step.number + " prompt length: " + prompt.length + " chars");
+        console.log(
+          "[SkillEngine] Resume Step " +
+            step.number +
+            " prompt length: " +
+            prompt.length +
+            " chars"
+        );
 
         const output = await invokeLLMWithRetry([
           { role: "system", content: systemPrompt },
           { role: "user", content: prompt },
         ]);
 
-        console.log("[SkillEngine] Resume Step " + step.number + " output length: " + output.length + " chars");
+        console.log(
+          "[SkillEngine] Resume Step " +
+            step.number +
+            " output length: " +
+            output.length +
+            " chars"
+        );
 
         const summary = extractSummary(output, step.number);
         previousOutputs.push(output);
         lastCompletedStep = step.number;
 
-        await db.update(generationSteps)
-          .set({ status: "completed", output, summary, completedAt: new Date() })
-          .where(and(eq(generationSteps.generationId, generationId), eq(generationSteps.stepNumber, step.number)));
-
+        await db
+          .update(generationSteps)
+          .set({
+            status: "completed",
+            output,
+            summary,
+            completedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(generationSteps.generationId, generationId),
+              eq(generationSteps.stepNumber, step.number)
+            )
+          );
       } catch (stepError: any) {
-        console.error("[SkillEngine] Resume Step " + step.number + " failed:", stepError.message?.slice(0, 500));
-        await db.update(generationSteps)
-          .set({ status: "failed", errorMessage: safeErrorMessage(stepError), completedAt: new Date() })
-          .where(and(eq(generationSteps.generationId, generationId), eq(generationSteps.stepNumber, step.number)));
+        console.error(
+          "[SkillEngine] Resume Step " + step.number + " failed:",
+          stepError.message?.slice(0, 500)
+        );
+        await db
+          .update(generationSteps)
+          .set({
+            status: "failed",
+            errorMessage: safeErrorMessage(stepError),
+            completedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(generationSteps.generationId, generationId),
+              eq(generationSteps.stepNumber, step.number)
+            )
+          );
 
         // Partial result assembly
         if (lastCompletedStep >= 4) {
           while (previousOutputs.length < 7) previousOutputs.push("");
-          const resultData = assembleResult(userInput, previousOutputs, lastCompletedStep);
+          const resultData = assembleResult(
+            userInput,
+            previousOutputs,
+            lastCompletedStep
+          );
           if (resultData.files.length > 0) {
-            await db.update(skillGenerations)
+            await db
+              .update(skillGenerations)
               .set({
                 status: "completed",
                 result: resultData,
-                errorMessage: "Steps 1-" + lastCompletedStep + " completed. Step " + step.number + " failed: " + safeErrorMessage(stepError).slice(0, 200),
+                errorMessage:
+                  "Steps 1-" +
+                  lastCompletedStep +
+                  " completed. Step " +
+                  step.number +
+                  " failed: " +
+                  safeErrorMessage(stepError).slice(0, 200),
                 completedAt: new Date(),
               })
               .where(eq(skillGenerations.id, generationId));
@@ -800,8 +1198,13 @@ export async function resumeGenerationPipeline(generationId: number): Promise<vo
           }
         }
 
-        await db.update(skillGenerations)
-          .set({ status: "failed", errorMessage: "Step " + step.number + " failed: " + safeErrorMessage(stepError) })
+        await db
+          .update(skillGenerations)
+          .set({
+            status: "failed",
+            errorMessage:
+              "Step " + step.number + " failed: " + safeErrorMessage(stepError),
+          })
           .where(eq(skillGenerations.id, generationId));
         return;
       }
@@ -810,15 +1213,30 @@ export async function resumeGenerationPipeline(generationId: number): Promise<vo
     // Assemble final result
     const resultData = assembleResult(userInput, previousOutputs, 7);
 
-    await db.update(skillGenerations)
-      .set({ status: "completed", result: resultData, errorMessage: null, completedAt: new Date() })
+    await db
+      .update(skillGenerations)
+      .set({
+        status: "completed",
+        result: resultData,
+        errorMessage: null,
+        completedAt: new Date(),
+      })
       .where(eq(skillGenerations.id, generationId));
 
-    console.log("[SkillEngine] Resume generation " + generationId + " completed with " + resultData.files.length + " files");
-
+    console.log(
+      "[SkillEngine] Resume generation " +
+        generationId +
+        " completed with " +
+        resultData.files.length +
+        " files"
+    );
   } catch (error: any) {
-    console.error("[SkillEngine] Resume pipeline failed:", safeErrorMessage(error));
-    await db.update(skillGenerations)
+    console.error(
+      "[SkillEngine] Resume pipeline failed:",
+      safeErrorMessage(error)
+    );
+    await db
+      .update(skillGenerations)
       .set({ status: "failed", errorMessage: safeErrorMessage(error) })
       .where(eq(skillGenerations.id, generationId));
   } finally {

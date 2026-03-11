@@ -5,13 +5,16 @@ import { Link, useLocation } from "wouter";
 import { Sparkles, History, LogOut } from "lucide-react";
 
 export default function Navbar() {
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, isLocalMode, logout } = useAuth();
   const [location] = useLocation();
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md">
       <div className="container flex h-11 items-center justify-between">
-        <Link href="/" className="flex items-center gap-2 font-semibold text-sm tracking-tight">
+        <Link
+          href="/"
+          className="flex items-center gap-2 font-semibold text-sm tracking-tight"
+        >
           <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
             <Sparkles className="h-3.5 w-3.5" />
           </div>
@@ -35,9 +38,15 @@ export default function Navbar() {
                 <span className="text-sm text-muted-foreground hidden sm:inline">
                   {user?.name || "用户"}
                 </span>
-                <Button variant="ghost" size="sm" onClick={() => logout()}>
-                  <LogOut className="h-4 w-4" />
-                </Button>
+                {isLocalMode ? (
+                  <span className="hidden sm:inline text-xs rounded-full bg-muted px-2 py-1 text-muted-foreground">
+                    本地模式
+                  </span>
+                ) : (
+                  <Button variant="ghost" size="sm" onClick={() => logout()}>
+                    <LogOut className="h-4 w-4" />
+                  </Button>
+                )}
               </div>
             </>
           )}
