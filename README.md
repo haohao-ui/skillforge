@@ -22,39 +22,39 @@ SkillForge 是一个完整的 Web 应用，内置经过实战验证的 **7 步 A
 
 ## 核心功能
 
-| 功能 | 说明 |
-|------|------|
-| 一键生成 | 输入 Skill 名称和描述，自动执行 7 步生成流程 |
-| 实时进度 | 每个步骤的执行状态实时展示 |
-| 质量审计 | 10 维度加权评分 + 自动修复低分项 |
+| 功能          | 说明                                           |
+| ------------- | ---------------------------------------------- |
+| 一键生成      | 输入 Skill 名称和描述，自动执行 7 步生成流程   |
+| 实时进度      | 每个步骤的执行状态实时展示                     |
+| 质量审计      | 10 维度加权评分 + 自动修复低分项               |
 | 完整 Skill 包 | SKILL.md + scripts/ + references/ + templates/ |
-| ZIP 下载 | 一键打包下载，即装即用 |
-| 任务控制 | 支持取消运行中的任务、删除历史记录 |
+| ZIP 下载      | 一键打包下载，即装即用                         |
+| 任务控制      | 支持取消运行中的任务、删除历史记录             |
 
 ---
 
 ## 7 步生成流程
 
-| 步骤 | 名称 | 核心作用 |
-|------|------|----------|
-| Step 1 | 需求深度挖掘 | 5 维框架分析：定位、边界、场景、知识缺口、竞品 |
-| Step 2 | 架构决策引擎 | 5 大决策：结构模式、自由度、资源规划、披露策略、质量保证 |
-| Step 3 | 元数据精炼 | 3 个候选 description 自评打分，选出最优触发器 |
-| Step 4 | SKILL.md 主体生成 | 按架构决策生成精炼的指令主体（150-450 行） |
-| Step 5 | 质量审计与优化 | 10 维度加权评分 + 自动修复低分项 |
-| Step 6 | 配套资源生成 | 生成 scripts/、references/、templates/ 等配套文件 |
-| Step 7 | 最终组装与交付 | 格式验证 + 内容验证 + 最佳实践验证 |
+| 步骤   | 名称              | 核心作用                                                 |
+| ------ | ----------------- | -------------------------------------------------------- |
+| Step 1 | 需求深度挖掘      | 5 维框架分析：定位、边界、场景、知识缺口、竞品           |
+| Step 2 | 架构决策引擎      | 5 大决策：结构模式、自由度、资源规划、披露策略、质量保证 |
+| Step 3 | 元数据精炼        | 3 个候选 description 自评打分，选出最优触发器            |
+| Step 4 | SKILL.md 主体生成 | 按架构决策生成精炼的指令主体（150-450 行）               |
+| Step 5 | 质量审计与优化    | 10 维度加权评分 + 自动修复低分项                         |
+| Step 6 | 配套资源生成      | 生成 scripts/、references/、templates/ 等配套文件        |
+| Step 7 | 最终组装与交付    | 格式验证 + 内容验证 + 最佳实践验证                       |
 
 ---
 
 ## 技术栈
 
-| 层 | 技术 |
-|---|------|
-| 前端 | React 19 + Tailwind CSS 4 + shadcn/ui |
-| 后端 | Express 4 + tRPC 11 |
-| 数据库 | MySQL / TiDB（Drizzle ORM） |
-| LLM | OpenAI-compatible API（支持任意兼容提供商） |
+| 层     | 技术                                        |
+| ------ | ------------------------------------------- | ---------- |
+| 前端   | React 19 + Tailwind CSS 4 + shadcn/ui       |
+| 后端   | Express 4 + tRPC 11                         |
+| 数据库 | MySQL / TiDB（Drizzle ORM）                 | postgresql |
+| LLM    | OpenAI-compatible API（支持任意兼容提供商） |
 
 ---
 
@@ -64,7 +64,7 @@ SkillForge 是一个完整的 Web 应用，内置经过实战验证的 **7 步 A
 
 - Node.js 22+
 - pnpm
-- MySQL 或 TiDB 数据库
+- MySQL/TiDB/PostgreSQL 数据库
 - OpenAI-compatible LLM API Key
 
 ### 安装
@@ -84,10 +84,16 @@ cp .env.example .env
 按顺序执行 `drizzle/` 目录下的迁移文件：
 
 ```bash
+# MySQL/TiDB
 mysql -u user -p skillforge < drizzle/0000_striped_iron_man.sql
 mysql -u user -p skillforge < drizzle/0001_legal_thor.sql
 mysql -u user -p skillforge < drizzle/0002_supreme_gabe_jones.sql
 mysql -u user -p skillforge < drizzle/0003_wet_vance_astro.sql
+```
+
+```bash
+# PostgreSQL
+pnpm db:push
 ```
 
 ### 启动
@@ -109,14 +115,26 @@ node dist/index.js
 
 本应用使用 OpenAI-compatible API 格式。你可以使用任何支持 `/v1/chat/completions` 端点的提供商：
 
-| 提供商 | API URL | 说明 |
-|--------|---------|------|
-| OpenAI | `https://api.openai.com/v1/chat/completions` | 推荐 GPT-5.4 |
-| DeepSeek | `https://api.deepseek.com/v1/chat/completions` | 性价比高 |
+| 提供商      | API URL                                        | 说明         |
+| ----------- | ---------------------------------------------- | ------------ |
+| OpenAI      | `https://api.openai.com/v1/chat/completions`   | 推荐 GPT-5.4 |
+| DeepSeek    | `https://api.deepseek.com/v1/chat/completions` | 性价比高     |
 | Together AI | `https://api.together.xyz/v1/chat/completions` | 多种开源模型 |
-| 本地部署 | `http://localhost:11434/v1/chat/completions` | Ollama 等 |
+| 本地部署    | `http://localhost:11434/v1/chat/completions`   | Ollama 等    |
 
 在 `.env` 中设置 `BUILT_IN_FORGE_API_URL` 和 `BUILT_IN_FORGE_API_KEY` 即可。
+
+## OpenAI Codex (ChatGPT OAuth) 登录
+
+设置 `USE_OPENAI_OAUTH="true"`
+这样可以使用ChatGPT的登录，即可使用GPT-5.4最新模型。
+
+如何完成授权登录：
+
+1. 在终端进入 webapp 目录。
+2. 运行 pnpm run auth:openai。
+3. 按照在弹出的浏览器中进行登录/授权。
+4. 授权完毕后，终端会提示已保存配置，随后就可以正常启动并使用服务了。
 
 ---
 
@@ -127,6 +145,7 @@ skillforge/
 ├── README.md              # 本文件
 ├── LICENSE                # CC BY-NC-SA 4.0 许可证
 ├── CONTRIBUTING.md        # 贡献指南
+├── skillorge/             # 7 步 Agent Skills 生成引擎
 └── webapp/                # Web 应用完整源码
     ├── .env.example       # 环境变量模板
     ├── client/            # 前端 React 应用
@@ -148,13 +167,13 @@ skillforge/
 
 SkillForge 生成的每个 Skill 都遵循以下标准：
 
-| 维度 | 要求 |
-|------|------|
-| 格式规范 | YAML frontmatter 包含 `name` 和 `description`；name 为 hyphen-case |
-| 简洁度 | SKILL.md 正文 150-450 行；不解释 AI 已知的常识 |
-| 描述质量 | description 包含触发关键词，30-200 词 |
-| 渐进式披露 | 详细内容拆分到 `references/`，保持一层引用深度 |
-| 质量保证 | 包含验证检查清单和反面案例（Anti-patterns） |
+| 维度       | 要求                                                               |
+| ---------- | ------------------------------------------------------------------ |
+| 格式规范   | YAML frontmatter 包含 `name` 和 `description`；name 为 hyphen-case |
+| 简洁度     | SKILL.md 正文 150-450 行；不解释 AI 已知的常识                     |
+| 描述质量   | description 包含触发关键词，30-200 词                              |
+| 渐进式披露 | 详细内容拆分到 `references/`，保持一层引用深度                     |
+| 质量保证   | 包含验证检查清单和反面案例（Anti-patterns）                        |
 
 ---
 
@@ -162,11 +181,11 @@ SkillForge 生成的每个 Skill 都遵循以下标准：
 
 SkillForge 的设计理念和质量标准基于以下权威来源的系统性分析：
 
-| 来源 | 说明 |
-|------|------|
-| [Anthropic Skills 仓库](https://github.com/anthropics/skills) | 官方 17 个 Skills 实现（88.1k Stars） |
-| [Agent Skills 开放标准](https://agentskills.io) | 跨平台 Skills 互操作规范 |
-| [Anthropic 最佳实践文档](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices) | 官方 Skill 设计指南 |
+| 来源                                                                                                       | 说明                                  |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| [Anthropic Skills 仓库](https://github.com/anthropics/skills)                                              | 官方 17 个 Skills 实现（88.1k Stars） |
+| [Agent Skills 开放标准](https://agentskills.io)                                                            | 跨平台 Skills 互操作规范              |
+| [Anthropic 最佳实践文档](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices) | 官方 Skill 设计指南                   |
 
 ---
 
@@ -174,13 +193,14 @@ SkillForge 的设计理念和质量标准基于以下权威来源的系统性分
 
 本项目采用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) 许可证。
 
-| 允许 | 不允许 |
-|------|--------|
-| 个人学习和使用 | 商业用途 |
-| 修改和二次创作 | 不注明出处 |
+| 允许               | 不允许                   |
+| ------------------ | ------------------------ |
+| 个人学习和使用     | 商业用途                 |
+| 修改和二次创作     | 不注明出处               |
 | 非商业性分享和传播 | 使用更宽松的许可证再发布 |
 
 如需商业授权，请联系作者。
+https://github.com/mmlong818/skillforge
 
 ---
 
