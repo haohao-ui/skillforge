@@ -1,12 +1,14 @@
 import { defineConfig } from "drizzle-kit";
 import { detectDatabaseDialect } from "./drizzle/dialect";
 
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error("DATABASE_URL is required to run drizzle commands");
-}
+const DEFAULT_DATABASE_URL = "file:.data/skillforge.sqlite";
+const connectionString = process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
 
 function validateDatabaseUrl(databaseUrl: string) {
+  if (databaseUrl.startsWith("file:") || databaseUrl.startsWith("sqlite:")) {
+    return;
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(databaseUrl);
@@ -33,8 +35,15 @@ export default defineConfig({
   schema:
     dialect === "postgresql"
       ? "./drizzle/pgSchema.ts"
-      : "./drizzle/mysqlSchema.ts",
-  out: dialect === "postgresql" ? "./drizzle/postgres" : "./drizzle",
+      : dialect === "sqlite"
+        ? "./drizzle/sqliteSchema.ts"
+        : "./drizzle/mysqlSchema.ts",
+  out:
+    dialect === "postgresql"
+      ? "./drizzle/postgres"
+      : dialect === "sqlite"
+        ? "./drizzle/sqlite"
+        : "./drizzle",
   dialect,
   dbCredentials: {
     url: connectionString,

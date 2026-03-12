@@ -1,4 +1,5 @@
 import { COOKIE_NAME } from "@shared/const";
+import type { SkillGeneration } from "../drizzle/schema";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
@@ -15,6 +16,17 @@ import {
   STEPS,
 } from "./skillEngine";
 import { z } from "zod";
+
+function sanitizeGeneration<T extends { llmApiKey?: string | null }>(
+  generation: T
+): Omit<T, "llmApiKey">;
+function sanitizeGeneration<T extends { llmApiKey?: string | null }>(
+  generation: T | null
+): Omit<T, "llmApiKey"> | null {
+  if (!generation) return null;
+  const { llmApiKey: _llmApiKey, ...safeGeneration } = generation;
+  return safeGeneration;
+}
 
 export const appRouter = router({
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -40,6 +52,10 @@ export const appRouter = router({
           features: z.string().min(1),
           scenarios: z.string().optional(),
           extraNotes: z.string().optional(),
+          llmApiUrl: z.string().trim().min(1).max(2048).optional(),
+          llmApiKey: z.string().trim().min(1).max(4096).optional(),
+          llmModel: z.string().trim().min(1).max(128).optional(),
+          llmMaxTokens: z.number().int().min(1).max(128000).optional(),
         })
       )
       .mutation(async ({ ctx, input }) => {
@@ -50,6 +66,10 @@ export const appRouter = router({
           features: input.features,
           scenarios: input.scenarios || null,
           extraNotes: input.extraNotes || null,
+          llmApiUrl: input.llmApiUrl || null,
+          llmApiKey: input.llmApiKey || null,
+          llmModel: input.llmModel || null,
+          llmMaxTokens: input.llmMaxTokens ?? null,
         });
         // Run pipeline in background (don't await)
         runGenerationPipeline(genId).catch(err => {
@@ -67,12 +87,15 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         const gen = await getGenerationWithSteps(input.id);
         if (!gen || gen.userId !== ctx.user.id) return null;
-        return gen;
+        return sanitizeGeneration(gen);
       }),
 
     /** List user's generation history */
     history: protectedProcedure.query(async ({ ctx }) => {
-      return getUserGenerations(ctx.user.id);
+      const generations = await getUserGenerations(ctx.user.id);
+      return generations.map((generation: SkillGeneration) =>
+        sanitizeGeneration(generation)
+      );
     }),
 
     /** Resume a failed generation from the last failed step */

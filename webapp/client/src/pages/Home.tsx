@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import {
   Sparkles,
@@ -44,6 +44,13 @@ export default function Home() {
   const [features, setFeatures] = useState("");
   const [scenarios, setScenarios] = useState("");
   const [extraNotes, setExtraNotes] = useState("");
+  const [llmApiUrl, setLlmApiUrl] = useState("");
+  const [llmApiKey, setLlmApiKey] = useState("");
+  const [llmModel, setLlmModel] = useState("");
+  const [llmMaxTokens, setLlmMaxTokens] = useState("");
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  const runtimeConfigQuery = trpc.system.runtimeConfig.useQuery();
 
   const generateMutation = trpc.skill.generate.useMutation({
     onSuccess: data => {
@@ -51,15 +58,75 @@ export default function Home() {
     },
   });
 
+  useEffect(() => {
+    if (settingsLoaded || !runtimeConfigQuery.data) return;
+
+    const stored =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem("skillforge.llm-settings")
+        : null;
+
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored) as {
+          llmApiUrl?: string;
+          llmApiKey?: string;
+          llmModel?: string;
+          llmMaxTokens?: string;
+        };
+        setLlmApiUrl(
+          parsed.llmApiUrl ?? runtimeConfigQuery.data.defaultApiUrl ?? ""
+        );
+        setLlmApiKey(parsed.llmApiKey ?? "");
+        setLlmModel(parsed.llmModel ?? runtimeConfigQuery.data.defaultModel);
+        setLlmMaxTokens(
+          parsed.llmMaxTokens ?? String(runtimeConfigQuery.data.defaultMaxTokens)
+        );
+        setSettingsLoaded(true);
+        return;
+      } catch {
+        /* ignore invalid local settings */
+      }
+    }
+
+    setLlmApiUrl(runtimeConfigQuery.data.defaultApiUrl ?? "");
+    setLlmApiKey("");
+    setLlmModel(runtimeConfigQuery.data.defaultModel);
+    setLlmMaxTokens(String(runtimeConfigQuery.data.defaultMaxTokens));
+    setSettingsLoaded(true);
+  }, [runtimeConfigQuery.data, settingsLoaded]);
+
+  useEffect(() => {
+    if (!settingsLoaded || typeof window === "undefined") return;
+
+    window.localStorage.setItem(
+      "skillforge.llm-settings",
+      JSON.stringify({
+        llmApiUrl,
+        llmApiKey,
+        llmModel,
+        llmMaxTokens,
+      })
+    );
+  }, [llmApiKey, llmApiUrl, llmMaxTokens, llmModel, settingsLoaded]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!skillName.trim() || !domain.trim() || !features.trim()) return;
+    const parsedMaxTokens = Number.parseInt(llmMaxTokens, 10);
     generateMutation.mutate({
       skillName: skillName.trim(),
       domain: domain.trim(),
       features: features.trim(),
       scenarios: scenarios.trim() || undefined,
       extraNotes: extraNotes.trim() || undefined,
+      llmApiUrl: llmApiUrl.trim() || undefined,
+      llmApiKey: llmApiKey.trim() || undefined,
+      llmModel: llmModel.trim() || undefined,
+      llmMaxTokens:
+        Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0
+          ? parsedMaxTokens
+          : undefined,
     });
   };
 
@@ -202,6 +269,114 @@ export default function Home() {
                       className="text-sm resize-none"
                     />
                   </div>
+                </div>
+
+                <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">模型设置</h3>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        服务端 `.env` 已配置的值优先；未配置时，将使用这里保存的当前浏览器设置。
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-[11px]"
+                      disabled={!runtimeConfigQuery.data}
+                      onClick={() => {
+                        if (!runtimeConfigQuery.data) return;
+                        setLlmApiUrl(
+                          runtimeConfigQuery.data.defaultApiUrl ?? ""
+                        );
+                        setLlmApiKey("");
+                        setLlmModel(runtimeConfigQuery.data.defaultModel);
+                        setLlmMaxTokens(
+                          String(runtimeConfigQuery.data.defaultMaxTokens)
+                        );
+                      }}
+                    >
+                      恢复默认
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1 sm:col-span-2">
+                      <Label htmlFor="llmApiUrl" className="text-xs">
+                        API URL
+                      </Label>
+                      <Input
+                        id="llmApiUrl"
+                        placeholder="例如：https://api.openai.com/v1/chat/completions"
+                        value={llmApiUrl}
+                        onChange={e => setLlmApiUrl(e.target.value)}
+                        className="h-9 text-sm"
+                        disabled={runtimeConfigQuery.data?.useOpenAIOAuth}
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <Label htmlFor="llmApiKey" className="text-xs">
+                        API Key
+                      </Label>
+                      <Input
+                        id="llmApiKey"
+                        type="password"
+                        placeholder={
+                          runtimeConfigQuery.data?.hasDefaultApiKey
+                            ? "服务端已配置默认 key；留空即可"
+                            : "当服务端未配置时，在这里填写"
+                        }
+                        value={llmApiKey}
+                        onChange={e => setLlmApiKey(e.target.value)}
+                        className="h-9 text-sm"
+                        autoComplete="off"
+                        disabled={runtimeConfigQuery.data?.useOpenAIOAuth}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="llmModel" className="text-xs">
+                        模型名称
+                      </Label>
+                      <Input
+                        id="llmModel"
+                        placeholder="例如：deepseek-chat / gpt-5.4"
+                        value={llmModel}
+                        onChange={e => setLlmModel(e.target.value)}
+                        className="h-9 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="llmMaxTokens" className="text-xs">
+                        Max Tokens
+                      </Label>
+                      <Input
+                        id="llmMaxTokens"
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={llmMaxTokens}
+                        onChange={e => setLlmMaxTokens(e.target.value)}
+                        className="h-9 text-sm"
+                      />
+                    </div>
+                  </div>
+                  {!runtimeConfigQuery.data?.useOpenAIOAuth &&
+                  !runtimeConfigQuery.data?.hasDefaultApiKey &&
+                  !llmApiKey.trim() ? (
+                    <p className="text-[11px] text-amber-600">
+                      当前服务端未配置默认 API Key。直接生成前，需要在这里填入可用的
+                      API Key。
+                    </p>
+                  ) : null}
+                  <p className="text-[11px] text-muted-foreground">
+                    默认 URL：{runtimeConfigQuery.data?.defaultApiUrl ?? "未配置"} ·
+                    当前默认：{runtimeConfigQuery.data?.defaultModel ?? "加载中"} ·{" "}
+                    {runtimeConfigQuery.data?.defaultMaxTokens ?? "..."} tokens ·
+                    数据库 {runtimeConfigQuery.data?.databaseDialect ?? "加载中"}
+                    {runtimeConfigQuery.data?.useOpenAIOAuth
+                      ? " · OpenAI OAuth 模式"
+                      : " · OpenAI-compatible API 模式"}
+                  </p>
                 </div>
 
                 <Button

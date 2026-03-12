@@ -70,6 +70,9 @@ export type ToolChoice =
 
 export type InvokeParams = {
   messages: Message[];
+  model?: string;
+  apiUrl?: string;
+  apiKey?: string;
   tools?: Tool[];
   toolChoice?: ToolChoice;
   tool_choice?: ToolChoice;
@@ -235,18 +238,21 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = (useOAuth: boolean) => {
+const resolveApiUrl = (useOAuth: boolean, requestedApiUrl?: string) => {
   if (useOAuth) {
     // If we're using the OpenAI Codex auth token, hit the real OpenAI API
     return "https://api.openai.com/v1/chat/completions";
   }
 
   const configuredUrl = ENV.forgeApiUrl?.trim();
-  if (!configuredUrl) {
+  const fallbackUrl = requestedApiUrl?.trim();
+  const baseUrl = configuredUrl || fallbackUrl;
+
+  if (!baseUrl) {
     return "https://forge.manus.im/v1/chat/completions";
   }
 
-  const normalized = configuredUrl.replace(/\/$/, "");
+  const normalized = baseUrl.replace(/\/$/, "");
   if (/(^|\/)v1\/chat\/completions$/.test(normalized)) {
     return normalized;
   }
@@ -274,7 +280,11 @@ const resolveOAuthModelName = (modelName: string): OpenAIOAuthModel => {
   );
 };
 
-const assertApiKey = (useOAuth: boolean, token: string | null) => {
+const assertApiKey = (
+  useOAuth: boolean,
+  token: string | null,
+  requestedApiKey?: string
+) => {
   if (useOAuth) {
     if (!token) {
       throw new Error(
@@ -284,7 +294,7 @@ const assertApiKey = (useOAuth: boolean, token: string | null) => {
     return;
   }
 
-  if (!ENV.forgeApiKey) {
+  if (!ENV.forgeApiKey?.trim() && !requestedApiKey?.trim()) {
     throw new Error("BUILT_IN_FORGE_API_KEY is not configured");
   }
 };
@@ -336,7 +346,12 @@ const normalizeResponseFormat = ({
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   const useOAuth = ENV.useOpenAIOAuth;
-  const modelName = resolveModelName(useOAuth);
+  const requestedModel = params.model?.trim();
+  const requestedApiUrl = params.apiUrl?.trim();
+  const requestedApiKey = params.apiKey?.trim();
+  const requestedMaxTokens =
+    params.maxTokens ?? params.max_tokens ?? ENV.forgeMaxTokens;
+  const modelName = requestedModel || resolveModelName(useOAuth);
 
   let resolveToken: string | null = null;
   if (useOAuth) {
@@ -363,7 +378,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     }
   }
 
-  assertApiKey(useOAuth, resolveToken);
+  assertApiKey(useOAuth, resolveToken, requestedApiKey);
 
   const {
     messages,
@@ -423,7 +438,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
         messages: formattedMessages as any,
         tools: mappedTools as any
       },
-      { apiKey: resolveToken || undefined, maxTokens: ENV.forgeMaxTokens }
+      { apiKey: resolveToken || undefined, maxTokens: requestedMaxTokens }
     );
 
     const toolCalls = res.content
@@ -479,7 +494,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.tool_choice = normalizedToolChoice;
   }
 
-  payload.max_tokens = ENV.forgeMaxTokens;
+  payload.max_tokens = requestedMaxTokens;
 
   const normalizedResponseFormat = normalizeResponseFormat({
     responseFormat,
@@ -492,7 +507,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.response_format = normalizedResponseFormat;
   }
 
-  const apiUrl = resolveApiUrl(useOAuth);
+  const apiUrl = resolveApiUrl(useOAuth, requestedApiUrl);
   console.log("[LLM Invoke] URL:", apiUrl);
   // Log the payload but truncate messages to not flood the logs if they are huge
   const logPayload = {
@@ -504,7 +519,9 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     JSON.stringify(logPayload, null, 2)
   );
   console.log("[LLM Invoke] Model explicitly used:", payload.model);
-  const bearerToken = useOAuth ? resolveToken : ENV.forgeApiKey;
+  const bearerToken = useOAuth
+    ? resolveToken
+    : ENV.forgeApiKey?.trim() || requestedApiKey;
 
   const response = await fetch(apiUrl, {
     method: "POST",

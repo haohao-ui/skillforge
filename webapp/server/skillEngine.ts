@@ -1,6 +1,15 @@
-import { eq, and } from "drizzle-orm";
+import type { SkillGeneration } from "../drizzle/schema";
 import { invokeLLM } from "./_core/llm";
-import { getDatabase } from "./db";
+import {
+  createGenerationSteps,
+  deleteGenerationById,
+  deleteGenerationStepsByGenerationId,
+  getGeneration,
+  listGenerationSteps,
+  updateGeneration,
+  updateGenerationStepById,
+  updateGenerationStepByNumber,
+} from "./db";
 
 // Import prompts directly so esbuild can inline them into the bundle
 // (readFileSync won't work in production because the JSON file isn't copied to dist/)
@@ -33,19 +42,8 @@ export {
 /** In-memory map of generationId → AbortController for running pipelines */
 const runningPipelines = new Map<number, AbortController>();
 
-async function requireDatabase() {
-  const database = await getDatabase();
-  if (!database) throw new Error("Database not available");
-  return database;
-}
-
 /** Cancel a running generation pipeline */
 export async function cancelGeneration(generationId: number): Promise<boolean> {
-  const {
-    db,
-    tables: { skillGenerations, generationSteps },
-  } = await requireDatabase();
-
   // Signal the running pipeline to abort
   const controller = runningPipelines.get(generationId);
   if (controller) {
@@ -54,26 +52,20 @@ export async function cancelGeneration(generationId: number): Promise<boolean> {
   }
 
   // Update DB status to cancelled
-  await db
-    .update(skillGenerations)
-    .set({ status: "cancelled", errorMessage: "Cancelled by user" })
-    .where(eq(skillGenerations.id, generationId));
+  await updateGeneration(generationId, {
+    status: "cancelled",
+    errorMessage: "Cancelled by user",
+  });
 
   // Mark any running/pending steps as cancelled
-  const steps = await db
-    .select()
-    .from(generationSteps)
-    .where(eq(generationSteps.generationId, generationId));
+  const steps = await listGenerationSteps(generationId);
   for (const step of steps) {
     if (step.status === "running" || step.status === "pending") {
-      await db
-        .update(generationSteps)
-        .set({
-          status: "failed",
-          errorMessage: "Cancelled by user",
-          completedAt: new Date(),
-        })
-        .where(eq(generationSteps.id, step.id));
+      await updateGenerationStepById(step.id, {
+        status: "failed",
+        errorMessage: "Cancelled by user",
+        completedAt: new Date(),
+      });
     }
   }
 
@@ -85,11 +77,6 @@ export async function cancelGeneration(generationId: number): Promise<boolean> {
 
 /** Delete a generation and all its steps */
 export async function deleteGeneration(generationId: number): Promise<boolean> {
-  const {
-    db,
-    tables: { skillGenerations, generationSteps },
-  } = await requireDatabase();
-
   // Cancel if running
   const controller = runningPipelines.get(generationId);
   if (controller) {
@@ -98,12 +85,8 @@ export async function deleteGeneration(generationId: number): Promise<boolean> {
   }
 
   // Delete steps first (foreign key dependency)
-  await db
-    .delete(generationSteps)
-    .where(eq(generationSteps.generationId, generationId));
-  await db
-    .delete(skillGenerations)
-    .where(eq(skillGenerations.id, generationId));
+  await deleteGenerationStepsByGenerationId(generationId);
+  await deleteGenerationById(generationId);
 
   console.log("[SkillEngine] Generation " + generationId + " deleted");
   return true;
@@ -338,6 +321,12 @@ function safeErrorMessage(error: any): string {
 
 async function invokeLLMWithRetry(
   messages: { role: string; content: string }[],
+  config: {
+    apiUrl?: string | null;
+    apiKey?: string | null;
+    model?: string | null;
+    maxTokens?: number | null;
+  } = {},
   maxRetries: number = 5
 ): Promise<string> {
   let lastError: any;
@@ -346,6 +335,10 @@ async function invokeLLMWithRetry(
     try {
       const result = await invokeLLM({
         messages: messages as any,
+        apiUrl: config.apiUrl ?? undefined,
+        apiKey: config.apiKey ?? undefined,
+        model: config.model ?? undefined,
+        maxTokens: config.maxTokens ?? undefined,
       });
 
       const output =
@@ -382,6 +375,20 @@ async function invokeLLMWithRetry(
   }
 
   throw lastError;
+}
+
+function getGenerationLLMOverrides(
+  gen: Pick<
+    SkillGeneration,
+    "llmApiUrl" | "llmApiKey" | "llmModel" | "llmMaxTokens"
+  >
+) {
+  return {
+    apiUrl: gen.llmApiUrl,
+    apiKey: gen.llmApiKey,
+    model: gen.llmModel,
+    maxTokens: gen.llmMaxTokens,
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -763,20 +770,11 @@ function assembleResult(
 export async function runGenerationPipeline(
   generationId: number
 ): Promise<void> {
-  const {
-    db,
-    tables: { skillGenerations, generationSteps },
-  } = await requireDatabase();
-
   // Register abort controller for this pipeline
   const abortController = new AbortController();
   runningPipelines.set(generationId, abortController);
 
-  const [gen] = await db
-    .select()
-    .from(skillGenerations)
-    .where(eq(skillGenerations.id, generationId))
-    .limit(1);
+  const gen = await getGeneration(generationId);
   if (!gen) throw new Error("Generation " + generationId + " not found");
 
   const userInput = {
@@ -786,20 +784,18 @@ export async function runGenerationPipeline(
     scenarios: gen.scenarios,
     extraNotes: gen.extraNotes,
   };
+  const llmOverrides = getGenerationLLMOverrides(gen);
 
-  await db
-    .update(skillGenerations)
-    .set({ status: "running", currentStep: 1 })
-    .where(eq(skillGenerations.id, generationId));
+  await updateGeneration(generationId, { status: "running", currentStep: 1 });
 
-  for (const step of STEPS) {
-    await db.insert(generationSteps).values({
+  await createGenerationSteps(
+    STEPS.map(step => ({
       generationId,
       stepNumber: step.number,
       stepName: step.name,
       status: "pending",
-    });
-  }
+    }))
+  );
 
   const previousOutputs: string[] = [];
   const systemPrompt = PROMPTS.system;
@@ -820,20 +816,12 @@ export async function runGenerationPipeline(
         return;
       }
 
-      await db
-        .update(skillGenerations)
-        .set({ currentStep: step.number })
-        .where(eq(skillGenerations.id, generationId));
+      await updateGeneration(generationId, { currentStep: step.number });
 
-      await db
-        .update(generationSteps)
-        .set({ status: "running", startedAt: new Date() })
-        .where(
-          and(
-            eq(generationSteps.generationId, generationId),
-            eq(generationSteps.stepNumber, step.number)
-          )
-        );
+      await updateGenerationStepByNumber(generationId, step.number, {
+        status: "running",
+        startedAt: new Date(),
+      });
 
       try {
         const prompt = buildStepPrompt(step.number, userInput, previousOutputs);
@@ -845,10 +833,13 @@ export async function runGenerationPipeline(
             " chars"
         );
 
-        const output = await invokeLLMWithRetry([
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt },
-        ]);
+        const output = await invokeLLMWithRetry(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: prompt },
+          ],
+          llmOverrides
+        );
 
         console.log(
           "[SkillEngine] Step " +
@@ -862,38 +853,22 @@ export async function runGenerationPipeline(
         previousOutputs.push(output);
         lastCompletedStep = step.number;
 
-        await db
-          .update(generationSteps)
-          .set({
-            status: "completed",
-            output,
-            summary,
-            completedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(generationSteps.generationId, generationId),
-              eq(generationSteps.stepNumber, step.number)
-            )
-          );
+        await updateGenerationStepByNumber(generationId, step.number, {
+          status: "completed",
+          output,
+          summary,
+          completedAt: new Date(),
+        });
       } catch (stepError: any) {
         console.error(
           "[SkillEngine] Step " + step.number + " failed after retries:",
           stepError.message?.slice(0, 500)
         );
-        await db
-          .update(generationSteps)
-          .set({
-            status: "failed",
-            errorMessage: safeErrorMessage(stepError),
-            completedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(generationSteps.generationId, generationId),
-              eq(generationSteps.stepNumber, step.number)
-            )
-          );
+        await updateGenerationStepByNumber(generationId, step.number, {
+          status: "failed",
+          errorMessage: safeErrorMessage(stepError),
+          completedAt: new Date(),
+        });
 
         // If Step 5+ fails, we can still assemble a partial result from completed steps
         if (lastCompletedStep >= 4) {
@@ -917,21 +892,18 @@ export async function runGenerationPipeline(
           );
 
           if (resultData.files.length > 0) {
-            await db
-              .update(skillGenerations)
-              .set({
-                status: "completed",
-                result: resultData,
-                errorMessage:
-                  "Steps 1-" +
-                  lastCompletedStep +
-                  " completed. Step " +
-                  step.number +
-                  " failed: " +
-                  safeErrorMessage(stepError).slice(0, 200),
-                completedAt: new Date(),
-              })
-              .where(eq(skillGenerations.id, generationId));
+            await updateGeneration(generationId, {
+              status: "completed",
+              result: resultData,
+              errorMessage:
+                "Steps 1-" +
+                lastCompletedStep +
+                " completed. Step " +
+                step.number +
+                " failed: " +
+                safeErrorMessage(stepError).slice(0, 200),
+              completedAt: new Date(),
+            });
 
             console.log(
               "[SkillEngine] Generation " +
@@ -947,14 +919,11 @@ export async function runGenerationPipeline(
         }
 
         // If we don't have enough steps for a partial result, mark as failed
-        await db
-          .update(skillGenerations)
-          .set({
-            status: "failed",
-            errorMessage:
-              "Step " + step.number + " failed: " + safeErrorMessage(stepError),
-          })
-          .where(eq(skillGenerations.id, generationId));
+        await updateGeneration(generationId, {
+          status: "failed",
+          errorMessage:
+            "Step " + step.number + " failed: " + safeErrorMessage(stepError),
+        });
         return;
       }
     }
@@ -973,10 +942,11 @@ export async function runGenerationPipeline(
         resultData.files.map(f => f.path).join(", ")
     );
 
-    await db
-      .update(skillGenerations)
-      .set({ status: "completed", result: resultData, completedAt: new Date() })
-      .where(eq(skillGenerations.id, generationId));
+    await updateGeneration(generationId, {
+      status: "completed",
+      result: resultData,
+      completedAt: new Date(),
+    });
 
     console.log(
       "[SkillEngine] Generation " +
@@ -990,10 +960,10 @@ export async function runGenerationPipeline(
       "[SkillEngine] Pipeline failed for generation " + generationId + ":",
       safeErrorMessage(error)
     );
-    await db
-      .update(skillGenerations)
-      .set({ status: "failed", errorMessage: safeErrorMessage(error) })
-      .where(eq(skillGenerations.id, generationId));
+    await updateGeneration(generationId, {
+      status: "failed",
+      errorMessage: safeErrorMessage(error),
+    });
   } finally {
     runningPipelines.delete(generationId);
   }
@@ -1006,27 +976,14 @@ export async function runGenerationPipeline(
 export async function resumeGenerationPipeline(
   generationId: number
 ): Promise<void> {
-  const {
-    db,
-    tables: { skillGenerations, generationSteps },
-  } = await requireDatabase();
-
   // Register abort controller for resume
   const abortController = new AbortController();
   runningPipelines.set(generationId, abortController);
 
-  const [gen] = await db
-    .select()
-    .from(skillGenerations)
-    .where(eq(skillGenerations.id, generationId))
-    .limit(1);
+  const gen = await getGeneration(generationId);
   if (!gen) throw new Error("Generation " + generationId + " not found");
 
-  const steps = await db
-    .select()
-    .from(generationSteps)
-    .where(eq(generationSteps.generationId, generationId))
-    .orderBy(generationSteps.stepNumber);
+  const steps = await listGenerationSteps(generationId);
 
   // Find the first non-completed step
   let resumeFromStep = 0;
@@ -1062,11 +1019,13 @@ export async function resumeGenerationPipeline(
     scenarios: gen.scenarios,
     extraNotes: gen.extraNotes,
   };
+  const llmOverrides = getGenerationLLMOverrides(gen);
 
-  await db
-    .update(skillGenerations)
-    .set({ status: "running", currentStep: resumeFromStep, errorMessage: null })
-    .where(eq(skillGenerations.id, generationId));
+  await updateGeneration(generationId, {
+    status: "running",
+    currentStep: resumeFromStep,
+    errorMessage: null,
+  });
 
   const systemPrompt = PROMPTS.system;
   let lastCompletedStep = resumeFromStep - 1;
@@ -1087,28 +1046,17 @@ export async function resumeGenerationPipeline(
         return;
       }
 
-      await db
-        .update(skillGenerations)
-        .set({ currentStep: step.number })
-        .where(eq(skillGenerations.id, generationId));
+      await updateGeneration(generationId, { currentStep: step.number });
 
       // Reset the step status
-      await db
-        .update(generationSteps)
-        .set({
-          status: "running",
-          startedAt: new Date(),
-          output: null,
-          summary: null,
-          errorMessage: null,
-          completedAt: null,
-        })
-        .where(
-          and(
-            eq(generationSteps.generationId, generationId),
-            eq(generationSteps.stepNumber, step.number)
-          )
-        );
+      await updateGenerationStepByNumber(generationId, step.number, {
+        status: "running",
+        startedAt: new Date(),
+        output: null,
+        summary: null,
+        errorMessage: null,
+        completedAt: null,
+      });
 
       try {
         const prompt = buildStepPrompt(step.number, userInput, previousOutputs);
@@ -1120,10 +1068,13 @@ export async function resumeGenerationPipeline(
             " chars"
         );
 
-        const output = await invokeLLMWithRetry([
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt },
-        ]);
+        const output = await invokeLLMWithRetry(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: prompt },
+          ],
+          llmOverrides
+        );
 
         console.log(
           "[SkillEngine] Resume Step " +
@@ -1137,38 +1088,22 @@ export async function resumeGenerationPipeline(
         previousOutputs.push(output);
         lastCompletedStep = step.number;
 
-        await db
-          .update(generationSteps)
-          .set({
-            status: "completed",
-            output,
-            summary,
-            completedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(generationSteps.generationId, generationId),
-              eq(generationSteps.stepNumber, step.number)
-            )
-          );
+        await updateGenerationStepByNumber(generationId, step.number, {
+          status: "completed",
+          output,
+          summary,
+          completedAt: new Date(),
+        });
       } catch (stepError: any) {
         console.error(
           "[SkillEngine] Resume Step " + step.number + " failed:",
           stepError.message?.slice(0, 500)
         );
-        await db
-          .update(generationSteps)
-          .set({
-            status: "failed",
-            errorMessage: safeErrorMessage(stepError),
-            completedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(generationSteps.generationId, generationId),
-              eq(generationSteps.stepNumber, step.number)
-            )
-          );
+        await updateGenerationStepByNumber(generationId, step.number, {
+          status: "failed",
+          errorMessage: safeErrorMessage(stepError),
+          completedAt: new Date(),
+        });
 
         // Partial result assembly
         if (lastCompletedStep >= 4) {
@@ -1179,33 +1114,27 @@ export async function resumeGenerationPipeline(
             lastCompletedStep
           );
           if (resultData.files.length > 0) {
-            await db
-              .update(skillGenerations)
-              .set({
-                status: "completed",
-                result: resultData,
-                errorMessage:
-                  "Steps 1-" +
-                  lastCompletedStep +
-                  " completed. Step " +
-                  step.number +
-                  " failed: " +
-                  safeErrorMessage(stepError).slice(0, 200),
-                completedAt: new Date(),
-              })
-              .where(eq(skillGenerations.id, generationId));
+            await updateGeneration(generationId, {
+              status: "completed",
+              result: resultData,
+              errorMessage:
+                "Steps 1-" +
+                lastCompletedStep +
+                " completed. Step " +
+                step.number +
+                " failed: " +
+                safeErrorMessage(stepError).slice(0, 200),
+              completedAt: new Date(),
+            });
             return;
           }
         }
 
-        await db
-          .update(skillGenerations)
-          .set({
-            status: "failed",
-            errorMessage:
-              "Step " + step.number + " failed: " + safeErrorMessage(stepError),
-          })
-          .where(eq(skillGenerations.id, generationId));
+        await updateGeneration(generationId, {
+          status: "failed",
+          errorMessage:
+            "Step " + step.number + " failed: " + safeErrorMessage(stepError),
+        });
         return;
       }
     }
@@ -1213,15 +1142,12 @@ export async function resumeGenerationPipeline(
     // Assemble final result
     const resultData = assembleResult(userInput, previousOutputs, 7);
 
-    await db
-      .update(skillGenerations)
-      .set({
-        status: "completed",
-        result: resultData,
-        errorMessage: null,
-        completedAt: new Date(),
-      })
-      .where(eq(skillGenerations.id, generationId));
+    await updateGeneration(generationId, {
+      status: "completed",
+      result: resultData,
+      errorMessage: null,
+      completedAt: new Date(),
+    });
 
     console.log(
       "[SkillEngine] Resume generation " +
@@ -1235,10 +1161,10 @@ export async function resumeGenerationPipeline(
       "[SkillEngine] Resume pipeline failed:",
       safeErrorMessage(error)
     );
-    await db
-      .update(skillGenerations)
-      .set({ status: "failed", errorMessage: safeErrorMessage(error) })
-      .where(eq(skillGenerations.id, generationId));
+    await updateGeneration(generationId, {
+      status: "failed",
+      errorMessage: safeErrorMessage(error),
+    });
   } finally {
     runningPipelines.delete(generationId);
   }

@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { ENV } from "./env";
 import { notifyOwner } from "./notification";
 import { adminProcedure, publicProcedure, router } from "./trpc";
+import { getDatabaseDialect } from "../db";
 
 export const systemRouter = router({
   health: publicProcedure
@@ -12,6 +14,15 @@ export const systemRouter = router({
     .query(() => ({
       ok: true,
     })),
+
+  runtimeConfig: publicProcedure.query(async () => ({
+    defaultApiUrl: ENV.forgeApiUrl.trim() || null,
+    hasDefaultApiKey: Boolean(ENV.forgeApiKey.trim()),
+    defaultModel: ENV.forgeModel,
+    defaultMaxTokens: ENV.forgeMaxTokens,
+    useOpenAIOAuth: ENV.useOpenAIOAuth,
+    databaseDialect: await getDatabaseDialect(),
+  })),
 
   notifyOwner: adminProcedure
     .input(

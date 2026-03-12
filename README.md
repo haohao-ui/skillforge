@@ -50,10 +50,10 @@ SkillForge 是一个完整的 Web 应用，内置经过实战验证的 **7 步 A
 ## 技术栈
 
 | 层     | 技术                                        |
-| ------ | ------------------------------------------- | ---------- |
+| ------ | ------------------------------------------- |
 | 前端   | React 19 + Tailwind CSS 4 + shadcn/ui       |
 | 后端   | Express 4 + tRPC 11                         |
-| 数据库 | MySQL / TiDB（Drizzle ORM）                 | postgresql |
+| 数据库 | SQLite / MySQL / TiDB / PostgreSQL（Drizzle ORM） |
 | LLM    | OpenAI-compatible API（支持任意兼容提供商） |
 
 ---
@@ -64,13 +64,20 @@ SkillForge 是一个完整的 Web 应用，内置经过实战验证的 **7 步 A
 
 - Node.js 22+
 - pnpm
-- MySQL/TiDB/PostgreSQL 数据库
 - OpenAI-compatible LLM API Key
+
+默认情况下不需要单独安装数据库。未设置 `DATABASE_URL` 时，应用会自动使用本地 SQLite：
+
+```env
+DATABASE_URL=file:.data/skillforge.sqlite
+```
+
+如果你已经有 MySQL、TiDB 或 PostgreSQL，也可以继续显式配置。
 
 ### 安装
 
 ```bash
-git clone https://github.com/mmlong818/skillforge.git
+git clone https://github.com/haohao-ui/skillforge.git
 cd skillforge/webapp
 
 pnpm install
@@ -81,18 +88,15 @@ cp .env.example .env
 
 ### 数据库初始化
 
-按顺序执行 `drizzle/` 目录下的迁移文件：
+如果使用默认本地 SQLite：
+
+- 首次启动会自动创建 `.data/skillforge.sqlite`
+- 会自动创建 `users`、`skill_generations`、`generation_steps` 三张表
+- 会在启动时自动补齐轻量字段，例如 `llmApiUrl`、`llmApiKey`、`llmModel`、`llmMaxTokens`
+
+如果使用外部数据库，设置 `DATABASE_URL` 后运行：
 
 ```bash
-# MySQL/TiDB
-mysql -u user -p skillforge < drizzle/0000_striped_iron_man.sql
-mysql -u user -p skillforge < drizzle/0001_legal_thor.sql
-mysql -u user -p skillforge < drizzle/0002_supreme_gabe_jones.sql
-mysql -u user -p skillforge < drizzle/0003_wet_vance_astro.sql
-```
-
-```bash
-# PostgreSQL
 pnpm db:push
 ```
 
@@ -122,12 +126,18 @@ node dist/index.js
 | Together AI | `https://api.together.xyz/v1/chat/completions` | 多种开源模型 |
 | 本地部署    | `http://localhost:11434/v1/chat/completions`   | Ollama 等    |
 
-在 `.env` 中设置 `BUILT_IN_FORGE_API_URL` 和 `BUILT_IN_FORGE_API_KEY` 即可。
+在 `.env` 中设置 `BUILT_IN_FORGE_API_URL`、`BUILT_IN_FORGE_API_KEY`、`BUILT_IN_FORGE_MODEL` 和 `BUILT_IN_FORGE_MAX_TOKENS` 即可。
+
+首页表单还提供当前任务的模型设置：
+
+- 可覆盖默认的模型和 token 上限
+- 当服务端未配置 `BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY` 时，可直接使用前端设置页里的 `API URL` / `API Key`
+- 服务端 `.env` 一旦配置了默认值，服务端配置优先
 
 ## OpenAI Codex (ChatGPT OAuth) 登录
 
 设置 `USE_OPENAI_OAUTH="true"`
-这样可以使用ChatGPT的登录，即可使用GPT-5.4最新模型。
+这样会直接走 OpenAI OAuth 通道，不再使用 `BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY`。默认模型是 `gpt-5.4`，也可以用 `BUILT_IN_FORGE_MODEL` 覆盖。
 
 如何完成授权登录：
 
@@ -135,6 +145,8 @@ node dist/index.js
 2. 运行 pnpm run auth:openai。
 3. 按照在弹出的浏览器中进行登录/授权。
 4. 授权完毕后，终端会提示已保存配置，随后就可以正常启动并使用服务了。
+
+注意：`.openai-credentials.json` 属于本地 OAuth 凭证，不能提交到 GitHub。
 
 ---
 

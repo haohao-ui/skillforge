@@ -22,8 +22,15 @@ SkillForge 的 Web 应用版本，将 7 步 Skill 生成流程自动化为一键
 
 - Node.js 22+
 - pnpm
-- MySQL、TiDB 或 PostgreSQL 数据库
 - OpenAI-compatible LLM API Key
+
+默认情况下不需要单独安装数据库。未设置 `DATABASE_URL` 时，应用会自动使用本地 SQLite 文件：
+
+```env
+DATABASE_URL=file:.data/skillforge.sqlite
+```
+
+如果你已经有 MySQL、TiDB 或 PostgreSQL，也可以继续显式配置。
 
 ### 安装
 
@@ -42,7 +49,7 @@ cp .env.example .env
 
 ### 数据库初始化
 
-设置 `DATABASE_URL` 后，直接运行：
+如果使用外部数据库，设置 `DATABASE_URL` 后运行：
 
 ```bash
 pnpm db:push
@@ -52,6 +59,15 @@ pnpm db:push
 
 - `mysql://` / `mariadb://` / `tidb://` 使用 MySQL Schema 和现有迁移目录
 - `postgres://` / `postgresql://` 使用 PostgreSQL Schema，并在 `drizzle/postgres/` 下生成迁移
+- `file:` / `sqlite:` 使用 SQLite Schema，并在 `drizzle/sqlite/` 下生成迁移
+
+如果你使用默认本地 SQLite：
+
+- 首次启动会自动创建 `.data/skillforge.sqlite`
+- 会自动创建 `users`、`skill_generations`、`generation_steps` 三张表
+- 对新增的轻量字段会在启动时自动补列，例如 `llmApiUrl`、`llmApiKey`、`llmModel`、`llmMaxTokens`
+
+也就是说，默认 SQLite 模式下不需要额外执行 `pnpm db:push` 就能直接跑起来。
 
 ### 启动开发服务器
 
@@ -104,6 +120,14 @@ BUILT_IN_FORGE_MAX_TOKENS=4096
 - 如果设置 `USE_OPENAI_OAUTH=true`，请求会直接走 OpenAI OAuth 通道，不再使用 `BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY`；模型默认是 `gpt-5.4`，也可以用 `BUILT_IN_FORGE_MODEL` 覆盖
 - `.openai-credentials.json` 属于本地 OAuth 凭证，不能提交到 GitHub
 - 修改 `.env` 后需要重启 `pnpm dev`
+
+首页表单还提供当前任务的模型设置：
+
+- 可覆盖默认的 `BUILT_IN_FORGE_MODEL` / `BUILT_IN_FORGE_MAX_TOKENS`
+- 当服务端未配置 `BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY` 时，可直接使用前端设置页里的 `API URL` / `API Key`
+- 服务端 `.env` 一旦配置了默认值，服务端配置优先
+
+注意：前端填写的 `API Key` 会保存在当前浏览器本地，并随任务一起保存到服务端生成记录中，以支持后台 7 步流程和后续 resume；但接口不会把该字段返回给前端页面。
 
 ---
 

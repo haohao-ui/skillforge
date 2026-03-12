@@ -121,6 +121,10 @@ describe("skill.generate", () => {
       features: "核心功能描述",
       scenarios: "使用场景",
       extraNotes: "补充说明",
+      llmApiUrl: "https://example.com/v1/chat/completions",
+      llmApiKey: "test-key",
+      llmModel: "test-model",
+      llmMaxTokens: 2048,
     });
 
     expect(result).toHaveProperty("id");
@@ -143,6 +147,9 @@ describe("skill.history", () => {
 
     const history = await caller.skill.history();
     expect(Array.isArray(history)).toBe(true);
+    for (const item of history) {
+      expect("llmApiKey" in item).toBe(false);
+    }
   });
 });
 
@@ -181,6 +188,7 @@ describe("skill.getStatus", () => {
     expect(status!.skillName).toBe("status-test-skill");
     expect(status!.steps).toBeDefined();
     expect(status!.steps.length).toBe(7);
+    expect("llmApiKey" in status!).toBe(false);
   });
 });
 

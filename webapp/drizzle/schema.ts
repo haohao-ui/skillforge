@@ -31,6 +31,11 @@ export type GenerationResult = {
   partial: boolean;
 };
 
+export type GenerationLLMConfig = {
+  model: string | null;
+  maxTokens: number | null;
+};
+
 export type User = {
   id: number;
   openId: string;
@@ -63,6 +68,10 @@ export type SkillGeneration = {
   features: string;
   scenarios: string | null;
   extraNotes: string | null;
+  llmApiUrl: string | null;
+  llmApiKey: string | null;
+  llmModel: string | null;
+  llmMaxTokens: number | null;
   status: GenerationStatus;
   currentStep: number;
   result: GenerationResult | null;
@@ -80,6 +89,10 @@ export type InsertSkillGeneration = {
   features: string;
   scenarios?: string | null;
   extraNotes?: string | null;
+  llmApiUrl?: string | null;
+  llmApiKey?: string | null;
+  llmModel?: string | null;
+  llmMaxTokens?: number | null;
   status?: GenerationStatus;
   currentStep?: number;
   result?: GenerationResult | null;
